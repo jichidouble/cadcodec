@@ -2473,22 +2473,14 @@ fn mleader_is_annotative(doc: &CadDocument) -> bool {
     use acadrust::objects::ObjectType;
     doc.objects
         .values()
-        .find_map(|o| match o {
-            ObjectType::MultiLeaderStyle(s) => Some(s.is_annotative),
-            _ => None,
-        })
-        .unwrap_or(false)
+        .any(|o| matches!(o, ObjectType::MultiLeaderStyle(s) if s.is_annotative))
 }
 
 fn table_is_annotative(doc: &CadDocument) -> bool {
     use acadrust::objects::ObjectType;
     doc.objects
         .values()
-        .find_map(|o| match o {
-            ObjectType::TableStyle(s) => Some(s.annotative),
-            _ => None,
-        })
-        .unwrap_or(false)
+        .any(|o| matches!(o, ObjectType::TableStyle(s) if s.annotative))
 }
 
 #[test]
@@ -2508,8 +2500,8 @@ fn dxf_roundtrip_annotative_styles() {
 
 #[test]
 fn dwg_roundtrip_annotative_styles() {
-    // MLEADERSTYLE: native DWG bit. STYLE/DIMSTYLE: AcadAnnotative EED.
-    // (TABLESTYLE is not yet serialized to DWG — tracked separately.)
+    // MLEADERSTYLE: native DWG bit. STYLE/DIMSTYLE/TABLESTYLE:
+    // AcadAnnotative EED.
     let rt = dwg_roundtrip(&build_annotative_document());
     assert!(
         rt.text_styles.get("Standard").map(|s| s.annotative).unwrap_or(false),
@@ -2520,6 +2512,7 @@ fn dwg_roundtrip_annotative_styles() {
         "DWG: dim style annotative lost"
     );
     assert!(mleader_is_annotative(&rt), "DWG: mleader style annotative lost");
+    assert!(table_is_annotative(&rt), "DWG: table style annotative lost");
 }
 
 #[test]

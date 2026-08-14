@@ -2250,6 +2250,15 @@ impl DwgDocumentBuilder {
                     ds.annotative = f;
                 }
             }
+            // TABLESTYLE records carry the same AcadAnnotative EED; the flag
+            // lives on the object record rather than a symbol-table row.
+            for object in document.objects.values_mut() {
+                if let crate::objects::ObjectType::TableStyle(ts) = object {
+                    if let Some(&f) = flags.get(&ts.handle) {
+                        ts.annotative = f;
+                    }
+                }
+            }
         }
         if perf {
             eprintln!(

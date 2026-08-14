@@ -1045,12 +1045,14 @@ impl<'a> DwgObjectWriter<'a> {
         else {
             return;
         };
-        self.write_common_non_entity_data(
+        let anno = self.annotative_eed_block(value.annotative);
+        self.write_common_non_entity_data_eed(
             type_code,
             value.handle,
             value.owner_handle,
             &[],
             &None,
+            anno,
         );
 
         if !self.version.r2010_plus() {

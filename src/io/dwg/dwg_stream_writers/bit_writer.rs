@@ -410,7 +410,12 @@ impl DwgBitWriter {
             size += 1;
             temp >>= 8;
         }
-        debug_assert!(size <= 8);
+        // BLL's 3-bit prefix only encodes 0–7 bytes (§4.5); a value requiring
+        // 8 bytes cannot be represented and would corrupt the stream.
+        assert!(
+            size <= 7,
+            "BLL value {value:#x} needs {size} bytes; the DWG BLL codec caps at 7"
+        );
 
         self.write_3bits(size);
         let bytes = (value as u64).to_le_bytes();
@@ -1205,6 +1210,144 @@ mod tests {
         // 3-bit size = 001, then 1 byte
         let bytes = w.into_bytes();
         assert_eq!(bytes.len(), 2); // 3 bits + 8 bits = 11 bits → 2 bytes
+    }
+
+    // ── Spec §4.3 / §4.4 exact bit patterns ──
+    //
+    // These pin the byte-level encodings prescribed by the DWG spec rather
+    // than just the 2-bit prefix: negative values MUST use the full-width
+    // branch, and the 255 / 256 boundaries must pick the correct branch.
+
+    #[test]
+    fn test_bit_short_negative_uses_full_short() {
+        let mut w = writer();
+        w.write_bit_short(-1);
+        let bytes = w.into_bytes();
+        assert_eq!(bytes[0] & 0xC0, 0x00); // prefix 00
+        let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+            bytes,
+            DwgVersion::AC24,
+            crate::types::DxfVersion::AC1027,
+        );
+        assert_eq!(r.read_bit_short(), -1);
+    }
+
+    #[test]
+    fn test_bit_short_255_uses_byte_branch() {
+        let mut w = writer();
+        w.write_bit_short(255);
+        let bytes = w.into_bytes();
+        assert_eq!(bytes[0] & 0xC0, 0x40); // prefix 01
+        let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+            bytes,
+            DwgVersion::AC24,
+            crate::types::DxfVersion::AC1027,
+        );
+        assert_eq!(r.read_bit_short(), 255);
+    }
+
+    #[test]
+    fn test_bit_long_negative_uses_full_long() {
+        let mut w = writer();
+        w.write_bit_long(-5);
+        let bytes = w.into_bytes();
+        assert_eq!(bytes[0] & 0xC0, 0x00); // prefix 00
+        let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+            bytes,
+            DwgVersion::AC24,
+            crate::types::DxfVersion::AC1027,
+        );
+        assert_eq!(r.read_bit_long(), -5);
+    }
+
+    #[test]
+    fn test_bit_long_255_uses_byte_branch() {
+        let mut w = writer();
+        w.write_bit_long(255);
+        let bytes = w.into_bytes();
+        assert_eq!(bytes[0] & 0xC0, 0x40); // prefix 01
+        let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+            bytes,
+            DwgVersion::AC24,
+            crate::types::DxfVersion::AC1027,
+        );
+        assert_eq!(r.read_bit_long(), 255);
+    }
+
+    #[test]
+    fn test_bit_long_256_uses_full_long() {
+        // §4.4: values >= 256 must use the full 4-byte LE branch.
+        let mut w = writer();
+        w.write_bit_long(256);
+        let bytes = w.into_bytes();
+        assert_eq!(bytes[0] & 0xC0, 0x00); // prefix 00
+        let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+            bytes,
+            DwgVersion::AC24,
+            crate::types::DxfVersion::AC1027,
+        );
+        assert_eq!(r.read_bit_long(), 256);
+    }
+
+    #[test]
+    fn test_bit_long_long_big_roundtrip() {
+        // §4.5: BLL is a 3B size prefix (0–7 bytes) + N LE bytes; exercise
+        // multi-byte values up to the 7-byte format maximum. Values needing
+        // 8 bytes are not representable and are rejected by the writer.
+        for &v in &[
+            0x7Fu64,
+            0x80,
+            0xFF,
+            0x100,
+            0x1_0000,
+            0x00FF_FFFF_FFFF_FFFF, // 7 significant bytes: format maximum
+        ] {
+            let mut w = writer();
+            w.write_bit_long_long(v as i64);
+            let bytes = w.into_bytes();
+            let mut r = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::new(
+                bytes,
+                DwgVersion::AC24,
+                crate::types::DxfVersion::AC1027,
+            );
+            assert_eq!(r.read_bit_long_long(), v as i64, "value {v:#x}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "caps at 7")]
+    fn test_bit_long_long_rejects_eight_byte_value() {
+        let mut w = writer();
+        w.write_bit_long_long(i64::MIN);
+    }
+
+    // ── Spec §4.7 / §15.2: MC must stay unsigned ──
+
+    #[test]
+    fn test_modular_char_64_is_single_byte_without_sign() {
+        // The R2010+ object-record handle-stream bit size is an unsigned MC;
+        // a termination byte with bit 6 (0x40) set is NOT a negative sign.
+        let mut w = writer();
+        w.write_modular_char(64);
+        assert_eq!(w.into_bytes(), vec![0x40]);
+    }
+
+    // ── Spec §4.8: MS boundary words ──
+
+    #[test]
+    fn test_modular_short_0x7fff_single_word() {
+        let mut w = writer();
+        w.write_modular_short(0x7FFF);
+        assert_eq!(w.into_bytes(), vec![0xFF, 0x7F]);
+    }
+
+    #[test]
+    fn test_modular_short_0x8000_two_words() {
+        let mut w = writer();
+        w.write_modular_short(0x8000);
+        // §4.8: 16-bit LE modules; module 1 carries the low 15 bits plus the
+        // continuation flag (0x8000), module 2 carries the upper bits (0x0001).
+        assert_eq!(w.into_bytes(), vec![0x00, 0x80, 0x01, 0x00]);
     }
 
     // ── Handle encoding ──

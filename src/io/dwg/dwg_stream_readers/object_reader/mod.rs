@@ -1029,6 +1029,17 @@ mod tests {
     }
 
     #[test]
+    fn test_modular_char_unsigned_sign_bit() {
+        // §15.2: the R2010+ handle-stream bit size is an unsigned MC — a
+        // termination byte with bit 6 (0x40) set decodes as +64, never as a
+        // negative value.
+        let data = [0x40u8];
+        let (val, len) = read_modular_char(&data);
+        assert_eq!(val, 64);
+        assert_eq!(len, 1);
+    }
+
+    #[test]
     fn test_modular_short_roundtrip() {
         // Verify roundtrip with the writer's encoding
         use crate::io::dwg::dwg_stream_writers::object_writer::common::{
