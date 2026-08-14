@@ -153,6 +153,40 @@ fn c_smoke_compiles_links_and_runs() {
 }
 
 #[test]
+fn c_iterate_compiles_links_and_runs() {
+    let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    if !dll.exists() {
+        eprintln!("SKIP: acadrust.dll not found; skipping C iterate test");
+        return;
+    }
+    let out_dir = std::env::temp_dir().join("acadrust_c_iterate");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let exe = out_dir.join("c_iterate.exe");
+    let src = std::path::Path::new(manifest).join("tests/ffi/c_iterate.c");
+
+    let status = std::process::Command::new(&cc)
+        .arg(src.as_os_str())
+        .arg(dll.as_os_str())
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .expect("failed to launch C compiler");
+    assert!(status.success(), "C compile/link failed");
+
+    let out = std::process::Command::new(&exe)
+        .output()
+        .expect("failed to run c_iterate");
+    assert!(
+        out.status.success(),
+        "c_iterate exited with {:?}: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn iterate_sample_document_via_abi() {
     let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_iter");
     let mut data: *mut DwgData = std::ptr::null_mut();
