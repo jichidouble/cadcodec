@@ -206,10 +206,17 @@ sequenceDiagram
 ## 11. 风险与决策记录
 
 - opaque 引用稳定性：DwgObject* 必须稳定到文档销毁。Rust 侧对象若用 Vec 存储，
-  扩容会移动地址——因此文档内对象用 Box（或固定 arena）存储，保证地址稳定。
-  这是 P2 实现时的关键点。
+  扩容会移动地址。**已决策**：FFI 层维护独立的对象地址映射（如
+  HashMap<Handle, Box<ObjectRef>> 或固定 arena），保证指针稳定到文档销毁；
+  不改 Rust 核心 CadDocument 的存储结构。核心侵入最小，FFI 层承担映射维护。
 - MinGW/MSVC ABI 差异：double、uint64_t 在两工具链 ABI 一致；避免 long（Windows
   上 32 位，与 Linux 不同）、避免 bool 跨 ABI（用 int）。
 - cbindgen 限制：opaque 类型需要 #[repr(C)] 空结构体 + cbindgen 配置。
 - 逐步暴露，不做大爆炸：P1 先打通读写到错误最小闭环，验证 ABI 和所有权模型，
   再扩展。任何阶段出现内存模型问题都能在早期低成本修正。
+
+## 12. 已确认决策（用户审阅）
+
+1. FFI 层维护独立对象地址映射，不改 Rust 核心存储。
+2. API 前缀统一 dwg_*（DWG/DXF 通用）/ dxf_*（DXF 专有），替换现有 acadrust_*。
+3. 错误处理：int 返回码 + 线程本地 dwg_last_error()。
