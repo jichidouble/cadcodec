@@ -46,6 +46,30 @@
 修复方向：写入时按目标版本过滤对象（R2007 之前跳过 MLEADERSTYLE/TABLESTYLE），
 并同步清理根字典条目与头部引用（`current_mleader_style_name` 等），避免悬挂引用。
 
+## 已修复：R2010+ VisualStyle 序列化（2026-08-14）
+
+根因：`VisualStyle::core_properties` 的 legacy(24)→R2010+ core(28) 映射表错位。
+`legacy[19]`（display_settings）被映射到 `modern[12]`（本应是
+edge_intersection_ltype），`legacy[6]` 被推到 `modern[13]`，且 `legacy[18]`
+（edge_do_hide_precision）未映射，导致 `modern[12]` 起所有字段错位、位流错乱。
+
+修复：`stub_objects.rs` 新增 `VisualStyle::legacy_to_core`（正确的 24→28 顺序映射），
+`core_properties` 与 `legacy_properties` 均改用该映射；新增单元测试锁定字段位置。
+修复后 cn.dxf（含 24 个 VisualStyle）的 R2010/R2013/R2018 输出均通过 ODA 验证。
+
+## VisualStyle 全版本专项验证（tests/dwg_visualstyle_matrix.rs）
+
+用含 24 个 VisualStyle 的 cn.dxf 输出全部 8 个版本，ODA 验证结果：
+
+| 版本 | 写入 | 库内读回 | ODA 解析 |
+|---|---|---|---|
+| R13 / R14 | 通过 | 通过（VisualStyle 完好） | 拒绝（原因：`AcDbMLeaderStyle`，与 VisualStyle 无关） |
+| R2000 / R2004 / R2007 / R2010 / R2013 / R2018 | 通过 | 通过 | 全部通过 |
+
+结论：VisualStyle 对象（R2007 legacy 格式读入）在全部支持版本中都能正确写入且库内读回
+不丢失；ODA 可解析 R2000+ 的全部输出。R13/R14 的拒绝是已知的 MLeaderStyle 版本过滤
+缺陷，修复后应可补齐最后两个版本。
+
 ## 复现命令
 
 ```powershell

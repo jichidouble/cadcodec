@@ -17,7 +17,8 @@
 //! `initialize_defaults`, and the DWG writer does not filter objects by
 //! target version. ODA therefore rejects the R13/R14 outputs with
 //! `Object improperly read: <AcDbMLeaderStyle>` while the library's own
-//! read-back succeeds. R2000+ outputs pass ODA validation.
+//! read-back succeeds. R2000+ outputs (including the previously broken
+//! R2010+ VisualStyle serialization) pass ODA validation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
