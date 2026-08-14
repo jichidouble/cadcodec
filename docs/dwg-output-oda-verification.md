@@ -57,6 +57,19 @@ edge_intersection_ltype），`legacy[6]` 被推到 `modern[13]`，且 `legacy[18
 `core_properties` 与 `legacy_properties` 均改用该映射；新增单元测试锁定字段位置。
 修复后 cn.dxf（含 24 个 VisualStyle）的 R2010/R2013/R2018 输出均通过 ODA 验证。
 
+## VisualStyle 全版本专项验证（tests/dwg_visualstyle_matrix.rs）
+
+用含 24 个 VisualStyle 的 cn.dxf 输出全部 8 个版本，ODA 验证结果：
+
+| 版本 | 写入 | 库内读回 | ODA 解析 |
+|---|---|---|---|
+| R13 / R14 | 通过 | 通过（VisualStyle 完好） | 拒绝（原因：`AcDbMLeaderStyle`，与 VisualStyle 无关） |
+| R2000 / R2004 / R2007 / R2010 / R2013 / R2018 | 通过 | 通过 | 全部通过 |
+
+结论：VisualStyle 对象（R2007 legacy 格式读入）在全部支持版本中都能正确写入且库内读回
+不丢失；ODA 可解析 R2000+ 的全部输出。R13/R14 的拒绝是已知的 MLeaderStyle 版本过滤
+缺陷，修复后应可补齐最后两个版本。
+
 ## 复现命令
 
 ```powershell
