@@ -10,6 +10,7 @@ pub mod tools;
 pub mod data;
 pub mod io;
 pub mod object;
+pub mod iterate;
 
 pub use types::*;
 pub use error::*;
@@ -17,3 +18,4 @@ pub use tools::*;
 pub use data::*;
 pub use io::*;
 pub use object::*;
+pub use iterate::*;
