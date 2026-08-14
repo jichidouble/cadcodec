@@ -30,6 +30,12 @@ pub enum DwgObjectType {
     XLine = 11,
     Solid = 12,
     Face3D = 13,
+    Insert = 14,
+    Polyline2D = 15,
+    Polyline3D = 16,
+    Mesh = 17,
+    Viewport = 18,
+    PolyfaceMesh = 19,
     Other = 1000,
 }
 
@@ -63,6 +69,12 @@ fn entity_kind(e: &EntityType) -> DwgObjectType {
         EntityType::XLine(_) => DwgObjectType::XLine,
         EntityType::Solid(_) => DwgObjectType::Solid,
         EntityType::Face3D(_) => DwgObjectType::Face3D,
+        EntityType::Insert(_) => DwgObjectType::Insert,
+        EntityType::Polyline2D(_) => DwgObjectType::Polyline2D,
+        EntityType::Polyline3D(_) => DwgObjectType::Polyline3D,
+        EntityType::Mesh(_) => DwgObjectType::Mesh,
+        EntityType::Viewport(_) => DwgObjectType::Viewport,
+        EntityType::PolyfaceMesh(_) => DwgObjectType::PolyfaceMesh,
         _ => DwgObjectType::Other,
     }
 }

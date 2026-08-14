@@ -1,6 +1,6 @@
 //! Typed getters for the basic entity families (Phase 2).
 
-use crate::entities::{Arc, Circle, Ellipse, EntityType, Face3D, Line, LwPolyline, MText, Point, Ray, Solid, Spline, Text, XLine};
+use crate::entities::{Arc, Circle, Ellipse, EntityType, Face3D, Insert, Line, LwPolyline, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, Ray, Solid, Spline, Text, Viewport, XLine};
 use crate::ffi::object::FfiObject;
 use crate::ffi::types::*;
 use crate::ffi::util::{color_to_c, copy_c_string};
@@ -107,6 +107,48 @@ fn as_lwpolyline<'a>(obj: *const DwgObject) -> Result<&'a LwPolyline, i32> {
     }
 }
 
+fn as_insert<'a>(obj: *const DwgObject) -> Result<&'a Insert, i32> {
+    match as_entity(obj)? {
+        EntityType::Insert(i) => Ok(i),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_polyline2d<'a>(obj: *const DwgObject) -> Result<&'a Polyline2D, i32> {
+    match as_entity(obj)? {
+        EntityType::Polyline2D(p) => Ok(p),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_polyline3d<'a>(obj: *const DwgObject) -> Result<&'a Polyline3D, i32> {
+    match as_entity(obj)? {
+        EntityType::Polyline3D(p) => Ok(p),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_mesh<'a>(obj: *const DwgObject) -> Result<&'a Mesh, i32> {
+    match as_entity(obj)? {
+        EntityType::Mesh(m) => Ok(m),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_viewport<'a>(obj: *const DwgObject) -> Result<&'a Viewport, i32> {
+    match as_entity(obj)? {
+        EntityType::Viewport(v) => Ok(v),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_polyface_mesh<'a>(obj: *const DwgObject) -> Result<&'a PolyfaceMesh, i32> {
+    match as_entity(obj)? {
+        EntityType::PolyfaceMesh(p) => Ok(p),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
 fn write_vec3(v: &crate::types::Vector3, x: *mut f64, y: *mut f64, z: *mut f64) -> i32 {
     if x.is_null() || y.is_null() || z.is_null() {
         return DWG_EINVAL;
@@ -174,6 +216,12 @@ vec3_getter!(dwg_entity_xline_get_base_point, as_xline, base_point);
 vec3_getter!(dwg_entity_xline_get_direction, as_xline, direction);
 vec3_getter!(dwg_entity_mtext_get_insertion_point, as_mtext, insertion_point);
 f64_getter!(dwg_entity_mtext_get_height, as_mtext, height);
+vec3_getter!(dwg_entity_insert_get_insert_point, as_insert, insert_point);
+f64_getter!(dwg_entity_insert_get_rotation, as_insert, rotation);
+vec3_getter!(dwg_entity_insert_get_normal, as_insert, normal);
+vec3_getter!(dwg_entity_viewport_get_center, as_viewport, center);
+f64_getter!(dwg_entity_viewport_get_width, as_viewport, width);
+f64_getter!(dwg_entity_viewport_get_height, as_viewport, height);
 
 /// Copy the TEXT entity's value into a caller-owned buffer.
 #[no_mangle]
@@ -392,6 +440,168 @@ pub unsafe extern "C" fn dwg_entity_lwpolyline_get_vertex(
             Some(v) => {
                 *x = v.location.x;
                 *y = v.location.y;
+                DWG_OK
+            }
+            None => DWG_ENOTFOUND,
+        },
+        Err(code) => code,
+    }
+}
+
+/// Copy the INSERT block name into a caller-owned buffer.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_insert_get_block_name(
+    obj: *const DwgObject,
+    buf: *mut i8,
+    cap: usize,
+    needed: *mut usize,
+) -> i32 {
+    match as_insert(obj) {
+        Ok(i) => copy_c_string(&i.block_name, buf, cap, needed),
+        Err(code) => code,
+    }
+}
+
+/// Read the INSERT column/row counts.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_insert_get_array(
+    obj: *const DwgObject,
+    columns: *mut u16,
+    rows: *mut u16,
+) -> i32 {
+    if columns.is_null() || rows.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_insert(obj) {
+        Ok(i) => {
+            *columns = i.column_count;
+            *rows = i.row_count;
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
+macro_rules! vertex_list_getters {
+    ($count:ident, $get:ident, $as_ty:ident, $vec_ty:ident) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $count(obj: *const DwgObject, count: *mut i32) -> i32 {
+            if count.is_null() {
+                return DWG_EINVAL;
+            }
+            match $as_ty(obj) {
+                Ok(e) => {
+                    *count = e.vertices.len() as i32;
+                    DWG_OK
+                }
+                Err(code) => code,
+            }
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $get(
+            obj: *const DwgObject,
+            index: i32,
+            x: *mut f64,
+            y: *mut f64,
+            z: *mut f64,
+        ) -> i32 {
+            match $as_ty(obj) {
+                Ok(e) => match e.vertices.get(index as usize) {
+                    Some(v) => write_vec3(&v.$vec_ty, x, y, z),
+                    None => DWG_ENOTFOUND,
+                },
+                Err(code) => code,
+            }
+        }
+    };
+}
+
+vertex_list_getters!(
+    dwg_entity_polyline2d_get_vertex_count,
+    dwg_entity_polyline2d_get_vertex,
+    as_polyline2d,
+    location
+);
+vertex_list_getters!(
+    dwg_entity_polyline3d_get_vertex_count,
+    dwg_entity_polyline3d_get_vertex,
+    as_polyline3d,
+    position
+);
+vertex_list_getters!(
+    dwg_entity_polyface_mesh_get_vertex_count,
+    dwg_entity_polyface_mesh_get_vertex,
+    as_polyface_mesh,
+    location
+);
+
+/// Read the MESH vertex count / a vertex by index (vertices are Vector3).
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_get_vertex_count(
+    obj: *const DwgObject,
+    count: *mut i32,
+) -> i32 {
+    if count.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_mesh(obj) {
+        Ok(m) => {
+            *count = m.vertices.len() as i32;
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_get_vertex(
+    obj: *const DwgObject,
+    index: i32,
+    x: *mut f64,
+    y: *mut f64,
+    z: *mut f64,
+) -> i32 {
+    match as_mesh(obj) {
+        Ok(m) => match m.vertices.get(index as usize) {
+            Some(v) => write_vec3(v, x, y, z),
+            None => DWG_ENOTFOUND,
+        },
+        Err(code) => code,
+    }
+}
+
+/// Read the MESH face count and the number of vertices of one face.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_get_face_count(
+    obj: *const DwgObject,
+    count: *mut i32,
+) -> i32 {
+    if count.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_mesh(obj) {
+        Ok(m) => {
+            *count = m.faces.len() as i32;
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_get_face_vertex_count(
+    obj: *const DwgObject,
+    face: i32,
+    count: *mut i32,
+) -> i32 {
+    if count.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_mesh(obj) {
+        Ok(m) => match m.faces.get(face as usize) {
+            Some(f) => {
+                *count = f.vertices.len() as i32;
                 DWG_OK
             }
             None => DWG_ENOTFOUND,

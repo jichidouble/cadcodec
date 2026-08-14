@@ -540,3 +540,85 @@ fn batch1_geometry_getters() {
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(&path_buf);
 }
+
+fn write_batch2_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
+    use acadrust::entities::{Insert, Mesh, Polyline2D, Vertex2D, Viewport};
+    use acadrust::types::Vector3;
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let dir = std::env::temp_dir().join(dir_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("batch2.dwg");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = CadDocument::new();
+    let ins = Insert::new("WALL", Vector3::new(1.0, 2.0, 3.0));
+    doc.add_entity(EntityType::Insert(ins)).unwrap();
+
+    let mut p2 = Polyline2D::new();
+    p2.add_vertex(Vertex2D::new(acadrust::types::Vector3::new(0.0, 0.0, 0.0)));
+    p2.add_vertex(Vertex2D::new(acadrust::types::Vector3::new(5.0, 6.0, 0.0)));
+    doc.add_entity(EntityType::Polyline2D(p2)).unwrap();
+
+    let mut mesh = Mesh::new();
+    mesh.add_vertex(Vector3::new(0.0, 0.0, 0.0));
+    mesh.add_vertex(Vector3::new(1.0, 0.0, 0.0));
+    mesh.add_vertex(Vector3::new(0.0, 1.0, 0.0));
+    doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+
+    let vp = Viewport::new();
+    doc.add_entity(EntityType::Viewport(vp)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+#[test]
+fn batch2_block_mesh_getters() {
+    let (path, path_buf) = write_batch2_dwg("acadrust_ffi_p3b2");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+
+    let ins = find_object_of_type(data, acadrust::ffi::DwgObjectType::Insert as i32);
+    assert!(!ins.is_null());
+    let mut needed = 0usize;
+    assert_eq!(unsafe { dwg_entity_insert_get_block_name(ins, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
+    let mut name_buf = [0u8; 64];
+    assert_eq!(
+        unsafe { dwg_entity_insert_get_block_name(ins, name_buf.as_mut_ptr() as *mut _, name_buf.len(), &mut needed) },
+        DWG_OK
+    );
+    eprintln!("block_name bytes: {:?}", &name_buf[..needed - 1]);
+    assert!(needed >= 2, "block_name must be non-empty after round-trip");
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    assert_eq!(unsafe { dwg_entity_insert_get_insert_point(ins, &mut x, &mut y, &mut z) }, DWG_OK);
+    assert!((x - 1.0).abs() < 1e-9 && (y - 2.0).abs() < 1e-9 && (z - 3.0).abs() < 1e-9);
+
+    let p2 = find_object_of_type(data, acadrust::ffi::DwgObjectType::Polyline2D as i32);
+    assert!(!p2.is_null());
+    let mut vcount = 0;
+    assert_eq!(unsafe { dwg_entity_polyline2d_get_vertex_count(p2, &mut vcount) }, DWG_OK);
+    assert_eq!(vcount, 2);
+    assert_eq!(unsafe { dwg_entity_polyline2d_get_vertex(p2, 1, &mut x, &mut y, &mut z) }, DWG_OK);
+    assert!((x - 5.0).abs() < 1e-9 && (y - 6.0).abs() < 1e-9);
+
+    let mesh = find_object_of_type(data, acadrust::ffi::DwgObjectType::Mesh as i32);
+    assert!(!mesh.is_null());
+    let mut mcount = 0;
+    assert_eq!(unsafe { dwg_entity_mesh_get_vertex_count(mesh, &mut mcount) }, DWG_OK);
+    assert_eq!(mcount, 3);
+
+    let vp = find_object_of_type(data, acadrust::ffi::DwgObjectType::Viewport as i32);
+    assert!(!vp.is_null());
+    let mut w = 0.0;
+    let mut h = 0.0;
+    assert_eq!(unsafe { dwg_entity_viewport_get_width(vp, &mut w) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_viewport_get_height(vp, &mut h) }, DWG_OK);
+    assert!(w > 0.0 && h > 0.0);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}
