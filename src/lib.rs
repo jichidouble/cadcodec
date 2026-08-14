@@ -140,6 +140,8 @@ pub mod io;
 pub mod xdata;
 pub mod objects;
 pub mod fields;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 
 // Re-export commonly used types
 pub use error::{DxfError, Result};

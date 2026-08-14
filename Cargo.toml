@@ -16,6 +16,10 @@ categories = ["parser-implementations", "encoding"]
 default = []
 serde = ["dep:serde", "bitflags/serde", "indexmap/serde"]
 import = ["dep:quick-xml"]
+ffi = []
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 # Error handling
