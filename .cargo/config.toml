@@ -1,0 +1,12 @@
+# Default toolchain configuration for acadrust.
+#
+# The FFI build targets a MinGW-compatible runtime, so the GNU toolchain is
+# the default cross-target. Cargo always defaults to the dev profile; use the
+# `rb`/`rt` aliases (or plain `--release`) for the release profile we ship.
+
+[build]
+target = "x86_64-pc-windows-gnu"
+
+[alias]
+rb = ["build", "--release"]
+rt = ["test", "--release"]

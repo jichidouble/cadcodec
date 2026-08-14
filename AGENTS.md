@@ -13,9 +13,10 @@ Guidelines for contributors to **acadrust**, a pure Rust library for reading and
 
 ## Build, Test, and Development Commands
 
-- `cargo build` — compile the library.
-- `cargo test` — run unit and integration tests.
-- `cargo test --all-features` — run tests with `serde` and `import` enabled.
+- `cargo build --release --features ffi` (alias `cargo rb --features ffi`) — compile the library (default target is MinGW/GNU via `.cargo/config.toml`).
+- `cargo test --release --features ffi` (alias `cargo rt --features ffi`) — run unit, ABI and C smoke tests.
+- `cargo test --all-features` — run the full suite with `serde` and `import` enabled.
+- Default toolchain: `x86_64-pc-windows-gnu` (MinGW); release is the shipped profile. Debug/MSVC builds are not the default.
 - `cargo clippy --all-targets` — lint; treat warnings as errors before pushing.
 - `cargo fmt --check` — verify formatting.
 - `cargo doc --no-deps` — build API docs.

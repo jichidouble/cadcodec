@@ -1,7 +1,29 @@
-//! ABI-level tests calling the exported extern "C" symbols directly.
+﻿//! ABI-level tests calling the exported extern "C" symbols directly.
 
 use acadrust::ffi::*;
 use std::ffi::CString;
+
+/// Locate the cdylib the C smoke tests link against. Preference order:
+/// 1. `ACADRUST_DLL` env var, 2. GNU release build, 3. any debug fallback.
+fn ffi_dll() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("ACADRUST_DLL") {
+        let p = std::path::PathBuf::from(p);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let candidates = [
+        format!("target/x86_64-pc-windows-gnu/release/acadrust.dll"),
+        format!("target/x86_64-pc-windows-gnu/debug/acadrust.dll"),
+        format!("target/release/acadrust.dll"),
+        format!("target/debug/acadrust.dll"),
+    ];
+    candidates
+        .iter()
+        .map(|c| std::path::Path::new(manifest).join(c))
+        .find(|p| p.exists())
+}
 
 /// Build a temp DWG containing Line, Circle and Text via the Rust API, then
 /// return its path (caller deletes it).
@@ -89,13 +111,13 @@ fn dwg_roundtrip_file() {
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
 
-    // 先写入一个空文档生成 src.dwg
+    // 鍏堝啓鍏ヤ竴涓┖鏂囨。鐢熸垚 src.dwg
     assert_eq!(unsafe { dwg_write_file(src.as_ptr(), data) }, DWG_OK);
-    // 读回
+    // 璇诲洖
     assert_eq!(unsafe { dwg_read_file(src.as_ptr(), data) }, DWG_OK);
-    // 写到 dst.dwg
+    // 鍐欏埌 dst.dwg
     assert_eq!(unsafe { dwg_write_file(dst.as_ptr(), data) }, DWG_OK);
-    // 再读回 dst.dwg 确认无错误
+    // 鍐嶈鍥?dst.dwg 纭鏃犻敊璇?
     assert_eq!(unsafe { dwg_read_file(dst.as_ptr(), data) }, DWG_OK);
 
     unsafe { dwg_data_destroy(data) };
@@ -121,7 +143,7 @@ fn c_smoke_compiles_links_and_runs() {
     // Locate a C compiler. Uses $CC if set, otherwise "gcc" on PATH (MinGW).
     let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    let dll = ffi_dll().unwrap_or_default();
     if !dll.exists() {
         // cdylib not built for this configuration; nothing to link against.
         eprintln!("SKIP: acadrust.dll not found; skipping C smoke test");
@@ -156,7 +178,7 @@ fn c_smoke_compiles_links_and_runs() {
 fn c_iterate_compiles_links_and_runs() {
     let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    let dll = ffi_dll().unwrap_or_default();
     if !dll.exists() {
         eprintln!("SKIP: acadrust.dll not found; skipping C iterate test");
         return;
@@ -190,7 +212,7 @@ fn c_iterate_compiles_links_and_runs() {
 fn c_table_compiles_links_and_runs() {
     let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    let dll = ffi_dll().unwrap_or_default();
     if !dll.exists() {
         eprintln!("SKIP: acadrust.dll not found; skipping C table test");
         return;
@@ -224,7 +246,7 @@ fn c_table_compiles_links_and_runs() {
 fn c_entity_batch1_compiles_links_and_runs() {
     let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    let dll = ffi_dll().unwrap_or_default();
     if !dll.exists() {
         eprintln!("SKIP: acadrust.dll not found; skipping C entity batch1 test");
         return;
@@ -291,7 +313,7 @@ fn write_entities_fixture() -> (CString, std::path::PathBuf) {
 fn c_entities_value_smoke() {
     let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    let dll = ffi_dll().unwrap_or_default();
     if !dll.exists() {
         eprintln!("SKIP: acadrust.dll not found; skipping C entities test");
         return;
