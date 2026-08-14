@@ -893,7 +893,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
 
         w.write_bit(false); // unknown
 
-        w.write_cm_color(&Color::from_index(h.intersection_color));
+        w.write_cm_color(&Color::from_index(h.interfere_color)); // INTERFERECOLOR
 
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // INTERFEREOBJVS
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // INTERFEREVPVS

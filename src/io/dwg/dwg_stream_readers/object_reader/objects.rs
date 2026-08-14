@@ -509,6 +509,10 @@ pub struct DictionaryData {
     pub duplicate_cloning: i16,
     pub hard_owner: bool,
     pub entries: Vec<DictionaryEntry>,
+    /// Keys that appear more than once in the dictionary record.
+    /// Spec §18.3: duplicate keys must be diagnosed, not silently merged.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub duplicate_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -778,7 +782,13 @@ pub fn read_dictionary(reader: &mut DwgMergedReader, version: DwgVersion) -> Dic
         entries.push(DictionaryEntry { name, handle });
     }
 
-    DictionaryData { duplicate_cloning, hard_owner, entries }
+    let duplicate_keys = duplicate_keys(&entries);
+    DictionaryData {
+        duplicate_cloning,
+        hard_owner,
+        entries,
+        duplicate_keys,
+    }
 }
 
 pub fn read_dictionary_with_default(reader: &mut DwgMergedReader) -> DictionaryWithDefaultData {
@@ -795,7 +805,25 @@ pub fn read_dictionary_with_default(reader: &mut DwgMergedReader) -> DictionaryW
 
     let default_handle = reader.read_handle();
 
-    DictionaryWithDefaultData { duplicate_cloning, hard_owner, entries, default_handle }
+    DictionaryWithDefaultData {
+        duplicate_cloning,
+        hard_owner,
+        entries,
+        default_handle,
+    }
+}
+
+/// Keys appearing more than once in a dictionary record (spec §18.3).
+fn duplicate_keys(entries: &[DictionaryEntry]) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::with_capacity(entries.len());
+    let mut dupes: Vec<String> = Vec::new();
+    for entry in entries {
+        if !seen.insert(entry.name.clone()) {
+            dupes.push(entry.name.clone());
+        }
+    }
+    dupes
 }
 
 pub fn read_dictionary_variable(reader: &mut DwgMergedReader) -> DictionaryVariableData {
@@ -1754,6 +1782,27 @@ mod tests {
         assert_eq!(dict.entries[1].name, "ACAD_MLINESTYLE");
         assert_eq!(dict.duplicate_cloning, 1);
         assert!(!dict.hard_owner);
+    }
+
+    #[test]
+    fn test_dictionary_duplicate_key_diagnosed() {
+        // Spec §18.3: a DICTIONARY record with the same key twice is
+        // malformed and must be reported, not silently overwritten.
+        let v = DwgVersion::AC15;
+        let d = DxfVersion::AC1015;
+        let mut r = make_reader(v, d, |w| {
+            w.write_bit_long(3); // 3 entries
+            w.write_bit_short(1); // cloning
+            w.write_byte(0); // not hard owner
+            w.write_variable_text("ACAD_GROUP");
+            w.write_handle(DwgReferenceType::SoftOwnership, 0x10);
+            w.write_variable_text("DUP");
+            w.write_handle(DwgReferenceType::SoftOwnership, 0x20);
+            w.write_variable_text("DUP");
+            w.write_handle(DwgReferenceType::SoftOwnership, 0x30);
+        });
+        let dict = read_dictionary(&mut r, v);
+        assert_eq!(dict.duplicate_keys, vec!["DUP".to_string()]);
     }
 
     #[test]

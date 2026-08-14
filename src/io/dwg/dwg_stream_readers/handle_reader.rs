@@ -73,6 +73,15 @@ pub fn read_handles(data: &[u8]) -> Result<HashMap<u64, i64>> {
             last_handle = last_handle.wrapping_add(handle_delta);
             last_offset = last_offset.wrapping_add(offset_delta);
 
+            // Spec §20.3: handle deltas must be strictly increasing (or at
+            // least never regress); a repeated handle is corruption. The
+            // writer emits strictly positive deltas, so a duplicate here
+            // means the Object Map is damaged or adversarial.
+            if handle_map.contains_key(&last_handle) {
+                return Err(crate::error::DxfError::Parse(format!(
+                    "Object Map contains duplicate handle {last_handle:#X} (spec §20.3)"
+                )));
+            }
             handle_map.insert(last_handle, last_offset);
         }
 
@@ -209,5 +218,31 @@ mod tests {
         assert_eq!(handles.len(), 2);
         assert_eq!(handles[&5_u64], 100_i64);
         assert_eq!(handles[&8_u64], 150_i64); // 5+3=8, 100+50=150
+    }
+
+    #[test]
+    fn test_handle_reader_duplicate_handle_detected() {
+        // Spec §20.3: a repeated handle in the Object Map is corruption and
+        // must be diagnosed. The second entry reuses the same handle (delta 0).
+        let mut chunk_data = Vec::new();
+        chunk_data.push(0x05); // MC: handle delta 5
+        chunk_data.push(0xE4); // SMC: offset 100 (multi-byte)
+        chunk_data.push(0x00);
+        chunk_data.push(0x00); // MC: handle delta 0 -> duplicate handle 5
+        chunk_data.push(0x32); // SMC: offset 50
+
+        let mut data = Vec::new();
+        let size = (2 + chunk_data.len()) as u16;
+        data.push((size >> 8) as u8);
+        data.push((size & 0xFF) as u8);
+        data.extend_from_slice(&chunk_data);
+        data.push(0x00);
+        data.push(0x00);
+
+        let result = read_handles(&data);
+        assert!(
+            result.is_err(),
+            "duplicate handle must be diagnosed as corruption, got {result:?}"
+        );
     }
 }

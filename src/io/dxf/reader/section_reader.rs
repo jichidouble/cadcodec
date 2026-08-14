@@ -1396,6 +1396,7 @@ impl<'a> SectionReader<'a> {
                 "$OBSLTYPE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.obscured_linetype = v; } } }
                 "$INTERSECTIONDISPLAY" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.intersection_display = v; } } }
                 "$INTERSECTIONCOLOR" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.intersection_color = v; } } }
+                "$INTERFERECOLOR" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.interfere_color = v; } } }
                 "$DIMASSOC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dimension_associativity = v; } } }
                 "$MEASUREMENT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.measurement = v; } } }
                 "$PROXYGRAPHICS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.proxy_graphics = v; } } }

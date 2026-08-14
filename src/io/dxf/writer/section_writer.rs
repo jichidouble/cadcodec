@@ -284,6 +284,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$DIMSE2", |w| w.write_i16(70, if hdr.dim_suppress_ext2 { 1 } else { 0 }))?;
         self.write_header_variable("$DIMTAD", |w| w.write_i16(70, hdr.dim_text_above))?;
         self.write_header_variable("$DIMZIN", |w| w.write_i16(70, hdr.dim_zero_suppression))?;
+        self.write_header_variable("$DIMAZIN", |w| w.write_i16(70, hdr.dim_alt_zero_suppression))?;
         self.write_header_variable("$DIMCLRD", |w| w.write_i16(70, hdr.dim_line_color.approximate_index()))?;
         self.write_header_variable("$DIMCLRE", |w| w.write_i16(70, hdr.dim_ext_line_color.approximate_index()))?;
         self.write_header_variable("$DIMCLRT", |w| w.write_i16(70, hdr.dim_text_color.approximate_index()))?;
@@ -321,6 +322,26 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$DIMLWD", |w| w.write_i16(70, hdr.dim_line_weight))?;
         self.write_header_variable("$DIMLWE", |w| w.write_i16(70, hdr.dim_ext_line_weight))?;
         self.write_header_variable("$DIMTFAC", |w| w.write_double(40, hdr.dim_tolerance_scale))?;
+
+        // === R2004+ rendering variables (spec §D.5 items 87–88) ===
+        self.write_header_variable("$SORTENTS", |w| w.write_i16(280, hdr.sort_entities))?;
+        self.write_header_variable("$INDEXCTL", |w| w.write_i16(280, hdr.index_control))?;
+        self.write_header_variable("$HIDETEXT", |w| w.write_i16(280, hdr.hide_text))?;
+        self.write_header_variable("$XCLIPFRAME", |w| w.write_i16(280, hdr.xclip_frame))?;
+        self.write_header_variable("$DIMASSOC", |w| w.write_i16(280, hdr.dimension_associativity))?;
+        self.write_header_variable("$HALOGAP", |w| w.write_i16(280, hdr.halo_gap))?;
+        self.write_header_variable("$OBSCOLOR", |w| w.write_i16(70, hdr.obscured_color))?;
+        self.write_header_variable("$OBSLTYPE", |w| w.write_i16(280, hdr.obscured_linetype))?;
+        self.write_header_variable("$INTERSECTIONDISPLAY", |w| {
+            w.write_i16(280, hdr.intersection_display)
+        })?;
+        self.write_header_variable("$INTERSECTIONCOLOR", |w| {
+            w.write_i16(70, hdr.intersection_color)
+        })?;
+        self.write_header_variable("$PROJECTNAME", |w| {
+            w.write_string(1, &hdr.project_name)
+        })?;
+        self.write_header_variable("$INTERFERECOLOR", |w| w.write_i16(62, hdr.interfere_color))?;
 
         // === Misc ===
         self.write_header_variable("$SPLFRAME", |w| w.write_i16(70, if hdr.spline_frame { 1 } else { 0 }))?;

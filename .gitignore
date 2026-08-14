@@ -31,3 +31,6 @@ Thumbs.db
 
 # Git worktrees
 /.worktrees/
+
+# Cargo build marker
+/.cargo-ok

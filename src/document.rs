@@ -204,6 +204,9 @@ pub struct HeaderVariables {
     pub intersection_display: i16,
     /// INTERSECTIONCOLOR - Intersection polyline color
     pub intersection_color: i16,
+    /// INTERFERECOLOR - Interference color (R2007+)
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub interfere_color: i16,
     /// DIMASSOC - Dimension associativity (0=no, 1=non-exploded, 2=associative)
     pub dimension_associativity: i16,
     /// PROJECTNAME - Project name
@@ -372,7 +375,8 @@ pub struct HeaderVariables {
     pub dim_text_above: i16,
     /// DIMZIN - Zero suppression
     pub dim_zero_suppression: i16,
-    /// DIMAZIN - Alternate zero suppression
+    /// DIMAZIN - Angular zero suppression (R2000+; field name kept for
+    /// backwards compatibility)
     pub dim_alt_zero_suppression: i16,
     /// DIMALT - Alternate units on/off
     pub dim_alternate_units: bool,
@@ -701,6 +705,7 @@ impl Default for HeaderVariables {
             obscured_linetype: 0,
             intersection_display: 0,
             intersection_color: 257,
+            interfere_color: 257,
             dimension_associativity: 2,
             project_name: String::new(),
             

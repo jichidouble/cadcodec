@@ -70,6 +70,7 @@ struct Pass2Output {
     view_rep_refs: HashMap<Handle, Vec<Handle>>,
     section_view_reps: Vec<Handle>,
     section_view_style: Option<crate::entities::SectionViewStyle>,
+    warnings: Vec<String>,
 }
 
 impl Pass2Output {
@@ -99,6 +100,7 @@ impl Pass2Output {
             view_rep_refs: HashMap::new(),
             section_view_reps: Vec::new(),
             section_view_style: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -1542,6 +1544,10 @@ impl DwgDocumentBuilder {
                 }
                 document.objects.extend(chunk.output.objects.drain());
                 document.add_loaded_entity_batch(&mut chunk.output.entities);
+                for warning in chunk.output.warnings.drain(..) {
+                    self.notifications
+                        .notify(NotificationType::Warning, warning);
+                }
                 for (owner, mut vertices) in chunk.pending.vertices.drain() {
                     pending
                         .vertices
@@ -4704,6 +4710,14 @@ impl DwgDocumentBuilder {
                 }
                 OBJ_DICTIONARY => {
                     let data = objects::read_dictionary(&mut reader, self.obj_reader.version());
+                    if !data.duplicate_keys.is_empty() {
+                        document.warnings.push(
+                            format!(
+                                "DICTIONARY {handle:#X} contains duplicate keys: {:?} (spec §18.3)",
+                                data.duplicate_keys
+                            ),
+                        );
+                    }
                     let mut obj = crate::objects::Dictionary::new();
                     obj.handle = Handle::from(handle);
                     obj.owner = owner_handle;

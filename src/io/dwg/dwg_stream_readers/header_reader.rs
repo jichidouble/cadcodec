@@ -792,7 +792,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
         let _ = r.read_bit(); // unknown
 
-        let _ = r.read_cm_color(); // INTERFERECOLOR
+        h.interfere_color = r.read_cm_color().approximate_index();
 
         let _ = r.read_handle(); // INTERFEREOBJVS
         let _ = r.read_handle(); // INTERFEREVPVS
