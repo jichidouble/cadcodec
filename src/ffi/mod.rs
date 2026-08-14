@@ -12,6 +12,8 @@ pub mod io;
 pub mod object;
 pub mod iterate;
 pub mod entity;
+pub mod table;
+pub mod util;
 
 pub use types::*;
 pub use error::*;
@@ -21,3 +23,4 @@ pub use io::*;
 pub use object::*;
 pub use iterate::*;
 pub use entity::*;
+pub use table::*;

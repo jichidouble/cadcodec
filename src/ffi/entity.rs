@@ -3,6 +3,7 @@
 use crate::entities::{Arc, Circle, EntityType, Line, Point, Text};
 use crate::ffi::object::FfiObject;
 use crate::ffi::types::*;
+use crate::ffi::util::copy_c_string;
 
 fn as_entity<'a>(obj: *const DwgObject) -> Result<&'a EntityType, i32> {
     if obj.is_null() {
@@ -48,27 +49,6 @@ fn as_point<'a>(obj: *const DwgObject) -> Result<&'a Point, i32> {
         EntityType::Point(p) => Ok(p),
         _ => Err(DWG_ETYPE),
     }
-}
-
-/// Copy `text` into a caller-owned buffer, `buf`/`cap`/`needed` style.
-fn copy_c_string(text: &str, buf: *mut i8, cap: usize, needed: *mut usize) -> i32 {
-    if needed.is_null() || (!buf.is_null() && cap == 0) {
-        return DWG_EINVAL;
-    }
-    let bytes = text.as_bytes();
-    let total = bytes.len() + 1;
-    unsafe { *needed = total; }
-    if buf.is_null() {
-        return DWG_OK;
-    }
-    if cap < total {
-        return DWG_EBUFFER;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
-        *buf.add(bytes.len()) = 0;
-    }
-    DWG_OK
 }
 
 fn write_vec3(v: &crate::types::Vector3, x: *mut f64, y: *mut f64, z: *mut f64) -> i32 {

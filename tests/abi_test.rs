@@ -187,6 +187,40 @@ fn c_iterate_compiles_links_and_runs() {
 }
 
 #[test]
+fn c_table_compiles_links_and_runs() {
+    let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    if !dll.exists() {
+        eprintln!("SKIP: acadrust.dll not found; skipping C table test");
+        return;
+    }
+    let out_dir = std::env::temp_dir().join("acadrust_c_table");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let exe = out_dir.join("c_table.exe");
+    let src = std::path::Path::new(manifest).join("tests/ffi/c_table.c");
+
+    let status = std::process::Command::new(&cc)
+        .arg(src.as_os_str())
+        .arg(dll.as_os_str())
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .expect("failed to launch C compiler");
+    assert!(status.success(), "C compile/link failed");
+
+    let out = std::process::Command::new(&exe)
+        .output()
+        .expect("failed to run c_table");
+    assert!(
+        out.status.success(),
+        "c_table exited with {:?}: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn iterate_sample_document_via_abi() {
     let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_iter");
     let mut data: *mut DwgData = std::ptr::null_mut();
@@ -301,4 +335,63 @@ fn text_getter_reads_value_with_buffer_protocol() {
 
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(&path_buf);
+}
+
+#[test]
+fn layer_color_roundtrip_via_abi() {
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+
+    let mut count = 0;
+    assert_eq!(unsafe { dwg_layer_table_count(data, &mut count) }, DWG_OK);
+    assert!(count >= 1, "default document has at least layer 0");
+
+    let color: i32 = 0x00FF0000; // red
+    assert_eq!(unsafe { dwg_layer_set_color(data, 0, color) }, DWG_OK);
+    let mut read = 0;
+    assert_eq!(unsafe { dwg_layer_get_color(data, 0, &mut read) }, DWG_OK);
+    assert_eq!(read, color);
+
+    let name = CString::new("0").unwrap();
+    let mut idx = -1;
+    assert_eq!(unsafe { dwg_layer_index_by_name(data, name.as_ptr(), &mut idx) }, DWG_OK);
+    assert_eq!(idx, 0);
+
+    let mut handle = 0u64;
+    assert_eq!(unsafe { dwg_layer_get_handle(data, 0, &mut handle) }, DWG_OK);
+    assert!(handle != 0);
+
+    // Out of range index.
+    let rc = unsafe { dwg_layer_get_name(data, 9999, std::ptr::null_mut(), 0, &mut 0usize) };
+    assert_eq!(rc, DWG_ENOTFOUND);
+
+    unsafe { dwg_data_destroy(data) };
+}
+
+#[test]
+fn generic_table_counts_and_names() {
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+
+    let mut count = 0;
+    assert_eq!(unsafe { dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Layer as i32, &mut count) }, DWG_OK);
+    assert!(count >= 1);
+    assert_eq!(unsafe { dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Block as i32, &mut count) }, DWG_OK);
+    assert!(count >= 2, "model + paper space block records");
+
+    let mut buf = [0u8; 64];
+    let mut needed = 0usize;
+    assert_eq!(unsafe {
+        dwg_table_entry_get_name(
+            data,
+            acadrust::ffi::DwgTableKind::Layer as i32,
+            0,
+            buf.as_mut_ptr() as *mut _,
+            buf.len(),
+            &mut needed,
+        )
+    }, DWG_OK);
+    assert_eq!(&buf[..needed - 1], b"0");
+
+    unsafe { dwg_data_destroy(data) };
 }
