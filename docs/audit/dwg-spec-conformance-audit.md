@@ -47,3 +47,36 @@
    roundtrip 套件 5/5 稳定，但根因未做最终隔离（怀疑与测试中途编辑状态有关）。
 6. **R2013 maintenance version**：代码写 29（0x1D），规范 10.2 提到 6/8；ODA 已接受产物，
    但与真实 R2013 文件字段值的对应关系建议再核对。
+
+## 实体层审计（§17 + §19 实体部分，补充）
+
+### 已核对符合规范
+
+| 规范条目 | 实现 | 证据 |
+|---|---|---|
+| 20.4.9-10 INSERT / MINSERT | 是 | Insert 带 rows/cols + dwg_minsert 固定类型标志（insert.rs:38-47） |
+| 20.4.22-30 DIMENSION 家族 | 是 | Dimension::Arc 等变体（dimension.rs:831），含 OCS/leader/角度字段 |
+| 20.4.31-36 POINT/3DFACE/PFACE/SOLID/TRACE | 是 | Solid/Face3D/PolyfaceMesh，TRACE 由 solid 模块覆盖 |
+| 20.4.11-15 VERTEX 变体 | 是 | Vertex2D/Vertex3D/PolyfaceVertex/PolygonMeshVertex |
+| 20.4.38 VIEWPORT | 是 | 视口几何 + 视觉样式/光照/冻结层字段 |
+| 20.4.85 LWPLINE | 部分 | 条件标量字段已实现；读取端不交叉验证 bulge/width/vertex-id 数量 vs point count（17.3 要求） |
+| 20.4.46 MTEXT | 是 | text frame/背景/列（R2018 动态列）字段齐全 |
+| 20.4.47-50 LEADER/MLEADER/TOLERANCE/MLINE | 是 | 顶点数组、标注上下文、样式/块/材质句柄 |
+| 20.4.75 HATCH | 是 | 边界路径/图案/seed/渐变 |
+| 20.4.41 REGION/3DSOLID/BODY | 是 | ACIS SAT/SAB + R2013+ DataStorage 关联 |
+
+### 实体层缺口
+
+1. **Proxy Entity Graphics 类型化不完整**（23 章）：规范列出 extents、circle、2-point
+   circle、arc、polyline、polygon、mesh、shell、text/text2、xline、ray 及十余种
+   subentity traits；当前 ProxyGraphics 仅类型化 FillOff(21) 与 UnicodeText(36)，
+   其余全部走 Unknown opaque 保留（round-trip 保真但不可读）。
+2. **MLeaderAnnotContext 无类型化支持**（18.4）：全库零命中，仅 raw 原样往返；
+   跨版本保存会丢弃（20.4.86-87 annotation context prescription 未实现）。
+
+## 结论与修复建议
+
+- 已用 TDD 修复的真实缺陷（均有红到绿测试）：TABLESTYLE DWG annotative EED、BLL
+  7 字节上限、VisualStyle legacy 到 R2010+ 映射、MLeaderStyle/TableStyle 版本过滤。
+- 待决策的较大缺口（工作量大于 1 项测试）：Proxy Graphics 类型化、MLeaderAnnotContext
+  类型化、is_writable_object 全量版本阈值、LWPOLYLINE 读取交叉验证。
