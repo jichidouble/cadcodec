@@ -36,6 +36,13 @@ pub enum DwgObjectType {
     Mesh = 17,
     Viewport = 18,
     PolyfaceMesh = 19,
+    Hatch = 20,
+    Tolerance = 21,
+    Leader = 22,
+    MLine = 23,
+    AttributeDefinition = 24,
+    Shape = 25,
+    Helix = 26,
     Other = 1000,
 }
 
@@ -75,6 +82,13 @@ fn entity_kind(e: &EntityType) -> DwgObjectType {
         EntityType::Mesh(_) => DwgObjectType::Mesh,
         EntityType::Viewport(_) => DwgObjectType::Viewport,
         EntityType::PolyfaceMesh(_) => DwgObjectType::PolyfaceMesh,
+        EntityType::Hatch(_) => DwgObjectType::Hatch,
+        EntityType::Tolerance(_) => DwgObjectType::Tolerance,
+        EntityType::Leader(_) => DwgObjectType::Leader,
+        EntityType::MLine(_) => DwgObjectType::MLine,
+        EntityType::AttributeDefinition(_) => DwgObjectType::AttributeDefinition,
+        EntityType::Shape(_) => DwgObjectType::Shape,
+        EntityType::Helix(_) => DwgObjectType::Helix,
         _ => DwgObjectType::Other,
     }
 }

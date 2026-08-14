@@ -622,3 +622,116 @@ fn batch2_block_mesh_getters() {
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(&path_buf);
 }
+
+fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
+    use acadrust::entities::{AttributeDefinition, Hatch, HatchPattern, Helix, Leader, Shape, Tolerance};
+    use acadrust::types::Vector3;
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let dir = std::env::temp_dir().join(dir_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("batch3.dwg");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = CadDocument::new();
+
+    let mut h = Hatch::new();
+    h.pattern = HatchPattern::new("SOLID");
+    h.pattern_angle = 0.25;
+    doc.add_entity(EntityType::Hatch(h)).unwrap();
+
+    let mut tol = Tolerance::new();
+    tol.insertion_point = Vector3::new(1.0, 2.0, 0.0);
+    tol.text = "TOL".to_string();
+    doc.add_entity(EntityType::Tolerance(tol)).unwrap();
+
+    let mut l = Leader::new();
+    l.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 10.0, 0.0),
+    ];
+    doc.add_entity(EntityType::Leader(l)).unwrap();
+
+    let mut a = AttributeDefinition::new("TAG1".to_string(), "Enter".to_string(), "D".to_string());
+    a.insertion_point = Vector3::new(3.0, 4.0, 0.0);
+    doc.add_entity(EntityType::AttributeDefinition(a)).unwrap();
+
+    let mut s = Shape::new();
+    s.insertion_point = Vector3::new(5.0, 6.0, 0.0);
+    s.size = 2.0;
+    s.rotation = 0.5;
+    doc.add_entity(EntityType::Shape(s)).unwrap();
+
+    let mut hx = Helix::new();
+    hx.axis_base_point = Vector3::new(0.0, 0.0, 0.0);
+    hx.radius = 3.0;
+    hx.turns = 4.0;
+    doc.add_entity(EntityType::Helix(hx)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+#[test]
+fn batch3_annotation_text_getters() {
+    let (path, path_buf) = write_batch3_dwg("acadrust_ffi_p3b3");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+
+    let mut needed = 0usize;
+    let mut buf = [0u8; 64];
+
+    let h = find_object_of_type(data, acadrust::ffi::DwgObjectType::Hatch as i32);
+    assert!(!h.is_null());
+    assert_eq!(
+        unsafe { dwg_entity_hatch_get_pattern_name(h, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
+        DWG_OK
+    );
+    assert_eq!(&buf[..needed - 1], b"SOLID");
+
+    let tol = find_object_of_type(data, acadrust::ffi::DwgObjectType::Tolerance as i32);
+    assert!(!tol.is_null());
+    assert_eq!(
+        unsafe { dwg_entity_tolerance_get_text(tol, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
+        DWG_OK
+    );
+    assert_eq!(&buf[..needed - 1], b"TOL");
+
+    let ldr = find_object_of_type(data, acadrust::ffi::DwgObjectType::Leader as i32);
+    assert!(!ldr.is_null());
+    let mut vcount = 0;
+    assert_eq!(unsafe { dwg_entity_leader_get_vertex_count(ldr, &mut vcount) }, DWG_OK);
+    assert_eq!(vcount, 2);
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    assert_eq!(unsafe { dwg_entity_leader_get_vertex(ldr, 1, &mut x, &mut y, &mut z) }, DWG_OK);
+    assert!((x - 10.0).abs() < 1e-9 && (y - 10.0).abs() < 1e-9);
+
+    let att = find_object_of_type(data, acadrust::ffi::DwgObjectType::AttributeDefinition as i32);
+    assert!(!att.is_null());
+    assert_eq!(
+        unsafe { dwg_entity_attrdef_get_tag(att, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
+        DWG_OK
+    );
+    assert_eq!(&buf[..needed - 1], b"TAG1");
+
+    let shp = find_object_of_type(data, acadrust::ffi::DwgObjectType::Shape as i32);
+    assert!(!shp.is_null());
+    let mut size = 0.0;
+    assert_eq!(unsafe { dwg_entity_shape_get_size(shp, &mut size) }, DWG_OK);
+    assert!((size - 2.0).abs() < 1e-9);
+
+    let hx = find_object_of_type(data, acadrust::ffi::DwgObjectType::Helix as i32);
+    assert!(!hx.is_null());
+    let mut radius = 0.0;
+    assert_eq!(unsafe { dwg_entity_helix_get_radius(hx, &mut radius) }, DWG_OK);
+    assert!((radius - 3.0).abs() < 1e-9);
+    let mut turns = 0.0;
+    assert_eq!(unsafe { dwg_entity_helix_get_turns(hx, &mut turns) }, DWG_OK);
+    assert!((turns - 4.0).abs() < 1e-9);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}

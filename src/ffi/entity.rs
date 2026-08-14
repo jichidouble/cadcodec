@@ -1,6 +1,6 @@
 //! Typed getters for the basic entity families (Phase 2).
 
-use crate::entities::{Arc, Circle, Ellipse, EntityType, Face3D, Insert, Line, LwPolyline, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, Ray, Solid, Spline, Text, Viewport, XLine};
+use crate::entities::{Arc, AttributeDefinition, Circle, Ellipse, EntityType, Face3D, Hatch, Helix, Insert, Leader, Line, LwPolyline, MLine, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, Ray, Shape, Solid, Spline, Text, Tolerance, Viewport, XLine};
 use crate::ffi::object::FfiObject;
 use crate::ffi::types::*;
 use crate::ffi::util::{color_to_c, copy_c_string};
@@ -149,6 +149,55 @@ fn as_polyface_mesh<'a>(obj: *const DwgObject) -> Result<&'a PolyfaceMesh, i32> 
     }
 }
 
+fn as_hatch<'a>(obj: *const DwgObject) -> Result<&'a Hatch, i32> {
+    match as_entity(obj)? {
+        EntityType::Hatch(h) => Ok(h),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_tolerance<'a>(obj: *const DwgObject) -> Result<&'a Tolerance, i32> {
+    match as_entity(obj)? {
+        EntityType::Tolerance(t) => Ok(t),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_leader<'a>(obj: *const DwgObject) -> Result<&'a Leader, i32> {
+    match as_entity(obj)? {
+        EntityType::Leader(l) => Ok(l),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_mline<'a>(obj: *const DwgObject) -> Result<&'a MLine, i32> {
+    match as_entity(obj)? {
+        EntityType::MLine(m) => Ok(m),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_attribute_definition<'a>(obj: *const DwgObject) -> Result<&'a AttributeDefinition, i32> {
+    match as_entity(obj)? {
+        EntityType::AttributeDefinition(a) => Ok(a),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_shape<'a>(obj: *const DwgObject) -> Result<&'a Shape, i32> {
+    match as_entity(obj)? {
+        EntityType::Shape(s) => Ok(s),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_helix<'a>(obj: *const DwgObject) -> Result<&'a Helix, i32> {
+    match as_entity(obj)? {
+        EntityType::Helix(h) => Ok(h),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
 fn write_vec3(v: &crate::types::Vector3, x: *mut f64, y: *mut f64, z: *mut f64) -> i32 {
     if x.is_null() || y.is_null() || z.is_null() {
         return DWG_EINVAL;
@@ -222,6 +271,21 @@ vec3_getter!(dwg_entity_insert_get_normal, as_insert, normal);
 vec3_getter!(dwg_entity_viewport_get_center, as_viewport, center);
 f64_getter!(dwg_entity_viewport_get_width, as_viewport, width);
 f64_getter!(dwg_entity_viewport_get_height, as_viewport, height);
+f64_getter!(dwg_entity_hatch_get_elevation, as_hatch, elevation);
+f64_getter!(dwg_entity_hatch_get_pattern_angle, as_hatch, pattern_angle);
+f64_getter!(dwg_entity_hatch_get_pattern_scale, as_hatch, pattern_scale);
+vec3_getter!(dwg_entity_tolerance_get_insertion_point, as_tolerance, insertion_point);
+vec3_getter!(dwg_entity_attrdef_get_insertion_point, as_attribute_definition, insertion_point);
+f64_getter!(dwg_entity_attrdef_get_height, as_attribute_definition, height);
+vec3_getter!(dwg_entity_shape_get_insertion_point, as_shape, insertion_point);
+f64_getter!(dwg_entity_shape_get_size, as_shape, size);
+f64_getter!(dwg_entity_shape_get_rotation, as_shape, rotation);
+vec3_getter!(dwg_entity_helix_get_axis_base_point, as_helix, axis_base_point);
+f64_getter!(dwg_entity_helix_get_radius, as_helix, radius);
+f64_getter!(dwg_entity_helix_get_turns, as_helix, turns);
+f64_getter!(dwg_entity_helix_get_turn_height, as_helix, turn_height);
+vec3_getter!(dwg_entity_mline_get_start_point, as_mline, start_point);
+f64_getter!(dwg_entity_mline_get_scale_factor, as_mline, scale_factor);
 
 /// Copy the TEXT entity's value into a caller-owned buffer.
 #[no_mangle]
@@ -609,3 +673,81 @@ pub unsafe extern "C" fn dwg_entity_mesh_get_face_vertex_count(
         Err(code) => code,
     }
 }
+
+macro_rules! string_field_getter {
+    ($name:ident, $as_ty:ident, $field:ident) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            obj: *const DwgObject,
+            buf: *mut i8,
+            cap: usize,
+            needed: *mut usize,
+        ) -> i32 {
+            match $as_ty(obj) {
+                Ok(e) => copy_c_string(&e.$field, buf, cap, needed),
+                Err(code) => code,
+            }
+        }
+    };
+}
+
+string_field_getter!(dwg_entity_tolerance_get_text, as_tolerance, text);
+string_field_getter!(dwg_entity_attrdef_get_tag, as_attribute_definition, tag);
+string_field_getter!(dwg_entity_attrdef_get_prompt, as_attribute_definition, prompt);
+string_field_getter!(dwg_entity_attrdef_get_default_value, as_attribute_definition, default_value);
+string_field_getter!(dwg_entity_mline_get_style_name, as_mline, style_name);
+
+/// Copy the HATCH pattern name into a caller-owned buffer.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_hatch_get_pattern_name(
+    obj: *const DwgObject,
+    buf: *mut i8,
+    cap: usize,
+    needed: *mut usize,
+) -> i32 {
+    match as_hatch(obj) {
+        Ok(h) => copy_c_string(&h.pattern.name, buf, cap, needed),
+        Err(code) => code,
+    }
+}
+
+macro_rules! vec3_list_getters {
+    ($count:ident, $get:ident, $as_ty:ident) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $count(obj: *const DwgObject, count: *mut i32) -> i32 {
+            if count.is_null() {
+                return DWG_EINVAL;
+            }
+            match $as_ty(obj) {
+                Ok(e) => {
+                    *count = e.vertices.len() as i32;
+                    DWG_OK
+                }
+                Err(code) => code,
+            }
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $get(
+            obj: *const DwgObject,
+            index: i32,
+            x: *mut f64,
+            y: *mut f64,
+            z: *mut f64,
+        ) -> i32 {
+            match $as_ty(obj) {
+                Ok(e) => match e.vertices.get(index as usize) {
+                    Some(v) => write_vec3(v, x, y, z),
+                    None => DWG_ENOTFOUND,
+                },
+                Err(code) => code,
+            }
+        }
+    };
+}
+
+vec3_list_getters!(
+    dwg_entity_leader_get_vertex_count,
+    dwg_entity_leader_get_vertex,
+    as_leader
+);
