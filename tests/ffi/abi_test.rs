@@ -232,6 +232,45 @@ fn io_functions_validate_arguments() {
     unsafe { dwg_data_destroy(data) };
 }
 
+#[test]
+fn version_and_parse_version() {
+    // Library version string is a stable `acadrust-<ver>` prefix.
+    let ver = unsafe { std::ffi::CStr::from_ptr(dwg_version()) }
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        ver.starts_with(&format!("acadrust-{}", env!("CARGO_PKG_VERSION"))),
+        "unexpected version string: {ver}"
+    );
+
+    // Numeric parse follows the DxfVersion discriminant (AC1032 == 8).
+    for (text, expected) in [
+        ("AC1032", 8),
+        ("AC1027", 7),
+        ("AC1024", 6),
+        ("AC1021", 5),
+        ("AC1018", 4),
+        ("AC1015", 3),
+        ("AC1014", 2),
+        ("AC1012", 1),
+    ] {
+        let c = CString::new(text).unwrap();
+        assert_eq!(unsafe { dwg_parse_version(c.as_ptr()) }, expected, "{text}");
+    }
+
+    // Unrecognised input and NULL return 0 (DxfVersion::Unknown).
+    let bogus = CString::new("AC9999").unwrap();
+    assert_eq!(unsafe { dwg_parse_version(bogus.as_ptr()) }, 0);
+    assert_eq!(unsafe { dwg_parse_version(std::ptr::null()) }, 0);
+
+    // `dwg_version_to_string` is the same stable string.
+    let alt = unsafe { std::ffi::CStr::from_ptr(dwg_version_to_string()) }
+        .to_str()
+        .unwrap();
+    assert_eq!(alt, ver);
+}
+
 fn last_error_text() -> String {
     let mut buf = [0u8; 256];
     let mut needed = 0usize;

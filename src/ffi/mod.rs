@@ -8,9 +8,11 @@
 pub mod data;
 pub mod error;
 pub mod io;
+pub mod tools;
 pub mod types;
 
 pub use data::*;
 pub use error::*;
 pub use io::*;
+pub use tools::*;
 pub use types::*;
