@@ -21,6 +21,10 @@ ffi = []
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[[test]]
+name = "ffi_abi_test"
+path = "tests/ffi/abi_test.rs"
+
 [dependencies]
 # Error handling
 thiserror = "1.0"
