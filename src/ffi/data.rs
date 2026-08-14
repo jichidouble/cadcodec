@@ -3,6 +3,7 @@
 
 use crate::document::CadDocument;
 use crate::ffi::error::{clear_last_error, set_last_error};
+use crate::ffi::object::FfiDocument;
 use crate::ffi::types::*;
 
 /// Create a new empty document. On success `*out` receives a document handle
@@ -12,7 +13,7 @@ pub extern "C" fn dwg_data_create(out: *mut *mut DwgData) -> i32 {
     if out.is_null() {
         return DWG_EINVAL;
     }
-    let data = Box::new(CadDocument::new());
+    let data = Box::new(FfiDocument::new(CadDocument::new()));
     unsafe {
         *out = Box::into_raw(data) as *mut DwgData;
     }
@@ -27,7 +28,7 @@ pub unsafe extern "C" fn dwg_data_destroy(data: *mut DwgData) {
     if data.is_null() {
         return;
     }
-    drop(Box::from_raw(data as *mut CadDocument));
+    drop(Box::from_raw(data as *mut FfiDocument));
 }
 
 /// Copy the document's DWG version string (e.g. "AC1032"; a fresh document
@@ -43,8 +44,8 @@ pub unsafe extern "C" fn dwg_data_version(
     if data.is_null() || needed.is_null() || (!buf.is_null() && cap == 0) {
         return DWG_EINVAL;
     }
-    let doc = &*(data as *const CadDocument);
-    let ver = doc.version.as_str();
+    let ffi = &*(data as *const FfiDocument);
+    let ver = ffi.doc.version.as_str();
     let bytes = ver.as_bytes();
     let total = bytes.len() + 1;
     *needed = total;

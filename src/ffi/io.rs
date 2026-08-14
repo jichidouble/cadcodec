@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::document::CadDocument;
 use crate::ffi::error::{clear_last_error, set_last_error};
+use crate::ffi::object::FfiDocument;
 use crate::ffi::types::*;
 
 fn c_path<'a>(text: *const c_char) -> Result<PathBuf, i32> {
@@ -18,8 +19,8 @@ fn c_path<'a>(text: *const c_char) -> Result<PathBuf, i32> {
 
 fn replace_document(data: *mut DwgData, doc: CadDocument) {
     unsafe {
-        let doc_ref = &mut *(data as *mut CadDocument);
-        *doc_ref = doc;
+        let ffi = &mut *(data as *mut FfiDocument);
+        *ffi = FfiDocument::new(doc);
     }
 }
 
@@ -64,7 +65,8 @@ fn write_impl(path: *const c_char, data: *const DwgData, dwg: bool) -> i32 {
         Ok(p) => p,
         Err(code) => return code,
     };
-    let doc = unsafe { &*(data as *const CadDocument) };
+    let ffi = unsafe { &*(data as *const FfiDocument) };
+    let doc = &ffi.doc;
     let result = if dwg {
         crate::io::dwg::DwgWriter::write_to_file(&path, doc)
     } else {
