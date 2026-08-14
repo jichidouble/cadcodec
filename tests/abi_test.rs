@@ -20,15 +20,15 @@ fn error_code_is_zero_by_default() {
 }
 
 #[test]
-fn legacy_version_and_parse_symbols_still_exported() {
+fn version_and_parse_symbols_exported() {
     unsafe {
-        let ptr = acadrust_version();
+        let ptr = dwg_version();
         assert!(!ptr.is_null());
         let version = std::ffi::CStr::from_ptr(ptr).to_str().unwrap();
         assert!(version.starts_with("acadrust-0.4.1"));
 
         let s = std::ffi::CString::new("AC1032").unwrap();
-        assert_eq!(acadrust_parse_version(s.as_ptr()), 8);
+        assert_eq!(dwg_parse_version(s.as_ptr()), 8);
     }
 }
 

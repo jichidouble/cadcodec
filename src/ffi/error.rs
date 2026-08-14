@@ -18,10 +18,6 @@ pub(crate) fn clear_last_error() {
     LAST_ERROR.with(|s| *s.borrow_mut() = None);
 }
 
-pub(crate) fn last_error_message() -> Option<String> {
-    LAST_ERROR.with(|s| s.borrow().as_ref().map(|(_, m)| m.clone()))
-}
-
 /// Copy the current thread's last error message into `buf` (caller-owned).
 /// `needed` receives the total bytes required including the NUL terminator.
 /// Returns the error code that was stored, or `DWG_OK` when none is pending.
