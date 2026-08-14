@@ -70,6 +70,18 @@ edge_intersection_ltype），`legacy[6]` 被推到 `modern[13]`，且 `legacy[18
 不丢失；ODA 可解析 R2000+ 的全部输出。R13/R14 的拒绝是已知的 MLeaderStyle 版本过滤
 缺陷，修复后应可补齐最后两个版本。
 
+## 已修复：R13/R14 MLeaderStyle 版本过滤（2026-08-14）
+
+根因：`is_writable_object` 只对 VisualStyle/Material 按版本过滤，
+`MultiLeaderStyle` 无条件可写、`TableStyle` 仅检查 class 存在；
+`write_dictionary` 的 pre-R2000 根字典条目过滤列表漏掉了
+`ACAD_MLEADERSTYLE` / `ACAD_TABLESTYLE`，导致 R13/R14 输出携带 R2007+ 对象。
+
+修复：两处各一行级别改动（`objects.rs`）——`MultiLeaderStyle`/`TableStyle`
+按 `r2007_plus()` 过滤（保留 R13/R14 同版本 raw passthrough 例外），
+pre-R2000 根字典过滤加入 `ACAD_MLEADERSTYLE`/`ACAD_TABLESTYLE`。
+验证：cn.dxf 全版本矩阵 **R13–R2018 共 8/8 全部通过 ODA**。
+
 ## 复现命令
 
 ```powershell
