@@ -12,4 +12,5 @@ pub mod types;
 
 pub use data::*;
 pub use error::*;
+pub use io::*;
 pub use types::*;

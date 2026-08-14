@@ -25,6 +25,10 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 name = "ffi_abi_test"
 path = "tests/ffi/abi_test.rs"
 
+[[test]]
+name = "c_smoke_runner"
+path = "tests/ffi/c_smoke_runner.rs"
+
 [dependencies]
 # Error handling
 thiserror = "1.0"

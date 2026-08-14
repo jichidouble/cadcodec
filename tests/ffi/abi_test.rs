@@ -7,6 +7,25 @@
 #![allow(unused_unsafe)]
 
 use acadrust::ffi::*;
+use acadrust::{CadDocument, DxfVersion, DwgReader, DwgWriter, EntityType};
+use std::ffi::CString;
+use std::path::PathBuf;
+
+/// Shared temp directory for FFI round-trip fixtures.
+fn ffi_temp_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join("acadrust_ffi_p1");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Write a small real DWG fixture using the library's own writer so the FFI
+/// read path exercises a valid file without committing binary fixtures.
+fn write_dwg_fixture(path: &std::path::Path) {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let line = acadrust::entities::Line::from_coords(0.0, 0.0, 0.0, 100.0, 50.0, 0.0);
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    DwgWriter::write_to_file(path, &doc).unwrap();
+}
 
 #[test]
 fn last_error_is_empty_by_default() {
@@ -121,4 +140,106 @@ fn data_helpers_validate_arguments() {
 
     // Destroying NULL is a no-op.
     unsafe { dwg_data_destroy(std::ptr::null_mut()) };
+}
+
+#[test]
+fn dwg_roundtrip_file() {
+    let dir = ffi_temp_dir();
+    let src = dir.join("src.dwg");
+    let dst = dir.join("dst.dwg");
+    write_dwg_fixture(&src);
+
+    let src_c = CString::new(src.to_str().unwrap()).unwrap();
+    let dst_c = CString::new(dst.to_str().unwrap()).unwrap();
+
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+
+    let rc = unsafe { dwg_read_file(src_c.as_ptr(), data) };
+    assert_eq!(rc, DWG_OK, "read must succeed: {}", last_error_text());
+
+    // Version follows the file, not the empty-document default.
+    let mut buf = [0u8; 16];
+    let mut needed = 0usize;
+    let rc = unsafe { dwg_data_version(data, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) };
+    assert_eq!(rc, DWG_OK);
+    assert_eq!(&buf[..needed - 1], b"AC1032");
+
+    let rc = unsafe { dwg_write_file(dst_c.as_ptr(), data) };
+    assert_eq!(rc, DWG_OK, "write must succeed: {}", last_error_text());
+    unsafe { dwg_data_destroy(data) };
+
+    // Verify the FFI output is a valid DWG the library can re-read.
+    let mut reader = DwgReader::from_file(&dst).unwrap();
+    let doc = reader.read().unwrap();
+    assert_eq!(doc.entities().count(), 1);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn dxf_roundtrip_file() {
+    let dir = ffi_temp_dir();
+    let src = dir.join("src.dxf");
+    let dst = dir.join("dst.dxf");
+
+    // Library-generated DXF fixture.
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let line = acadrust::entities::Line::from_coords(1.0, 2.0, 0.0, 3.0, 4.0, 0.0);
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    acadrust::DxfWriter::new(&doc).write_to_file(&src).unwrap();
+
+    let src_c = CString::new(src.to_str().unwrap()).unwrap();
+    let dst_c = CString::new(dst.to_str().unwrap()).unwrap();
+
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+
+    let rc = unsafe { dxf_read_file(src_c.as_ptr(), data) };
+    assert_eq!(rc, DWG_OK, "dxf read must succeed: {}", last_error_text());
+    let rc = unsafe { dxf_write_file(dst_c.as_ptr(), data) };
+    assert_eq!(rc, DWG_OK, "dxf write must succeed: {}", last_error_text());
+    unsafe { dwg_data_destroy(data) };
+
+    let doc = acadrust::DxfReader::from_file(&dst).unwrap().read().unwrap();
+    assert_eq!(doc.entities().count(), 1);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn io_functions_validate_arguments() {
+    let null_c = std::ptr::null();
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+
+    // NULL path.
+    assert_eq!(unsafe { dwg_read_file(null_c, data) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_write_file(null_c, data) }, DWG_EINVAL);
+    assert_eq!(unsafe { dxf_read_file(null_c, data) }, DWG_EINVAL);
+    assert_eq!(unsafe { dxf_write_file(null_c, data) }, DWG_EINVAL);
+
+    // NULL data handle.
+    let path_c = CString::new("x.dwg").unwrap();
+    assert_eq!(unsafe { dwg_read_file(path_c.as_ptr(), std::ptr::null_mut()) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_write_file(path_c.as_ptr(), std::ptr::null()) }, DWG_EINVAL);
+
+    // Missing file surfaces DWG_EREAD with a message.
+    let missing = CString::new(ffi_temp_dir().join("does_not_exist.dwg").to_str().unwrap()).unwrap();
+    let rc = unsafe { dwg_read_file(missing.as_ptr(), data) };
+    assert_eq!(rc, DWG_EREAD);
+    let code = unsafe { dwg_last_error_code() };
+    assert_eq!(code, DWG_EREAD);
+
+    unsafe { dwg_data_destroy(data) };
+}
+
+fn last_error_text() -> String {
+    let mut buf = [0u8; 256];
+    let mut needed = 0usize;
+    let rc = unsafe { dwg_last_error(buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) };
+    if rc == DWG_OK {
+        let n = needed.saturating_sub(1).min(buf.len());
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    } else {
+        format!("error code {rc}")
+    }
 }
