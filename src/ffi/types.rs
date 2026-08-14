@@ -1,14 +1,15 @@
-//! Opaque handle types and C error-code constants.
+//! Opaque C ABI types and error codes.
 
-/// Opaque handle to a drawing document (`Box<CadDocument>` behind the
-/// pointer).  Allocated with [`dwg_data_create`](super::data::dwg_data_create)
-/// and released with [`dwg_data_destroy`](super::data::dwg_data_destroy).
+/// Opaque document handle. Points to `Box<CadDocument>`; the document is the
+/// sole ownership root. Created by `dwg_data_create`, destroyed by
+/// `dwg_data_destroy`.
 #[repr(C)]
 pub struct DwgData {
     _priv: [u8; 0],
 }
 
-/// Opaque handle to a document object (reserved for the traversal phase).
+/// Opaque reference to an object inside a document. Owned by the document;
+/// never freed by the caller. Stable until the document is destroyed.
 #[repr(C)]
 pub struct DwgObject {
     _priv: [u8; 0],
@@ -16,19 +17,19 @@ pub struct DwgObject {
 
 /// Success.
 pub const DWG_OK: i32 = 0;
-/// Invalid argument (NULL handle/output pointer).
+/// Invalid argument or NULL pointer.
 pub const DWG_EINVAL: i32 = 1;
 /// Allocation failure.
 pub const DWG_ENOMEM: i32 = 2;
-/// File read failure.
+/// Read failure.
 pub const DWG_EREAD: i32 = 3;
-/// File write failure.
+/// Write failure.
 pub const DWG_EWRITE: i32 = 4;
-/// Unsupported or unknown file version.
+/// Unsupported version.
 pub const DWG_EVERSION: i32 = 5;
-/// Required object or file not found.
+/// Object/entity not found.
 pub const DWG_ENOTFOUND: i32 = 6;
-/// Caller-owned buffer too small (`*needed` holds the required size).
+/// Buffer too small (`needed` carries the required size).
 pub const DWG_EBUFFER: i32 = 7;
-/// Wrong object/entity type for the requested accessor.
+/// Type mismatch.
 pub const DWG_ETYPE: i32 = 8;

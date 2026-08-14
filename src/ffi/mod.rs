@@ -1,18 +1,26 @@
-//! C ABI for acadrust (LibreDWG-style opaque handles).
+//! C ABI surface for FFI consumers (LibreDWG-style opaque handles).
 //!
-//! Consumers compile against the generated `dwg_api.h` and link the
-//! `cdylib`/`staticlib` artifact.  The ABI is intentionally small and
-//! stable: every exported symbol is `#[no_mangle] extern "C"` and must
-//! keep its exact signature.
+//! Enable with `--features ffi`. Every exported symbol is `#[no_mangle]`
+//! with `extern "C"` and a stable signature; changing them breaks downstream
+//! binaries.
 
-pub mod data;
-pub mod error;
-pub mod io;
-pub mod tools;
 pub mod types;
+pub mod error;
+pub mod tools;
+pub mod data;
+pub mod io;
+pub mod object;
+pub mod iterate;
+pub mod entity;
+pub mod table;
+pub mod util;
 
-pub use data::*;
-pub use error::*;
-pub use io::*;
-pub use tools::*;
 pub use types::*;
+pub use error::*;
+pub use tools::*;
+pub use data::*;
+pub use io::*;
+pub use object::*;
+pub use iterate::*;
+pub use entity::*;
+pub use table::*;

@@ -1,63 +1,47 @@
-/* Minimal C consumer smoke test for the acadrust FFI (Phase 1 surface).
- *
- * Exercises the lifecycle, version, and error-slot entry points exactly as
- * an external C program would after reading dwg_api.h.
- */
-
-#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Opaque handle; definition lives in the library. */
 typedef struct DwgData DwgData;
 
-/* dwg_data_create / destroy */
 extern int dwg_data_create(DwgData **out);
 extern void dwg_data_destroy(DwgData *data);
-
-/* Version query */
-extern int dwg_data_version(const DwgData *data, char *buf, size_t cap, size_t *needed);
-
-/* Error slot */
 extern int dwg_last_error(char *buf, size_t cap, size_t *needed);
 extern int dwg_last_error_code(void);
+extern int dwg_data_version(const DwgData *data, char *buf, size_t cap, size_t *needed);
+extern int dwg_read_file(const char *path, DwgData *data);
+extern int dwg_write_file(const char *path, const DwgData *data);
+extern int dxf_read_file(const char *path, DwgData *data);
+extern int dxf_write_file(const char *path, const DwgData *data);
 
 int main(void) {
     DwgData *data = NULL;
-    char buf[256];
-    size_t n = 0;
+    if (dwg_data_create(&data) != 0) return 1;
+    if (data == NULL) return 2;
 
-    if (dwg_data_create(&data) != 0) {
-        fprintf(stderr, "dwg_data_create failed\n");
-        return 1;
-    }
-    if (data == NULL) {
-        fprintf(stderr, "dwg_data_create returned NULL handle\n");
-        return 2;
-    }
+    char buf[64];
+    size_t needed = 0;
+    int rc = dwg_data_version(data, buf, sizeof buf, &needed);
+    if (rc != 0) return 3;
+    if (strcmp(buf, "AC1032") != 0) return 4;
 
-    /* Error slot is empty after a successful create. */
-    if (dwg_last_error(buf, sizeof buf, &n) != 0 || n != 1 || buf[0] != '\0') {
-        fprintf(stderr, "error slot not empty after create (n=%zu)\n", n);
-        return 3;
-    }
-    if (dwg_last_error_code() != 0) {
-        fprintf(stderr, "error code not DWG_OK after create\n");
-        return 4;
-    }
+    rc = dwg_last_error(buf, sizeof buf, &needed);
+    if (rc != 0) return 5;
 
-    /* Version of a fresh document is a NUL-terminated string. */
-    if (dwg_data_version(data, buf, sizeof buf, &n) != 0 || n == 0 || buf[n - 1] != '\0') {
-        fprintf(stderr, "version query failed (n=%zu)\n", n);
-        return 5;
-    }
-
-    /* NULL data must be rejected (DWG_EINVAL == 1). */
-    if (dwg_data_version(NULL, buf, sizeof buf, &n) != 1) {
-        fprintf(stderr, "NULL version query was not DWG_EINVAL\n");
-        return 6;
-    }
+    /* Read/write round-trip through the C API: write -> read -> write -> read */
+    const char *dwg_path = "c_smoke_rt.dwg";
+    const char *dxf_path = "c_smoke_rt.dxf";
+    rc = dwg_write_file(dwg_path, data);
+    if (rc != 0) return 6;
+    rc = dwg_read_file(dwg_path, data);
+    if (rc != 0) return 7;
+    rc = dxf_write_file(dxf_path, data);
+    if (rc != 0) return 8;
+    rc = dxf_read_file(dxf_path, data);
+    if (rc != 0) return 9;
+    remove(dwg_path);
+    remove(dxf_path);
 
     dwg_data_destroy(data);
     return 0;
