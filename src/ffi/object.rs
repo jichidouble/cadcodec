@@ -22,6 +22,14 @@ pub enum DwgObjectType {
     Arc = 3,
     Text = 4,
     Point = 5,
+    Ellipse = 6,
+    MText = 7,
+    Spline = 8,
+    LwPolyline = 9,
+    Ray = 10,
+    XLine = 11,
+    Solid = 12,
+    Face3D = 13,
     Other = 1000,
 }
 
@@ -47,6 +55,14 @@ fn entity_kind(e: &EntityType) -> DwgObjectType {
         EntityType::Arc(_) => DwgObjectType::Arc,
         EntityType::Text(_) => DwgObjectType::Text,
         EntityType::Point(_) => DwgObjectType::Point,
+        EntityType::Ellipse(_) => DwgObjectType::Ellipse,
+        EntityType::MText(_) => DwgObjectType::MText,
+        EntityType::Spline(_) => DwgObjectType::Spline,
+        EntityType::LwPolyline(_) => DwgObjectType::LwPolyline,
+        EntityType::Ray(_) => DwgObjectType::Ray,
+        EntityType::XLine(_) => DwgObjectType::XLine,
+        EntityType::Solid(_) => DwgObjectType::Solid,
+        EntityType::Face3D(_) => DwgObjectType::Face3D,
         _ => DwgObjectType::Other,
     }
 }

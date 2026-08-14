@@ -395,3 +395,114 @@ fn generic_table_counts_and_names() {
 
     unsafe { dwg_data_destroy(data) };
 }
+
+fn write_batch1_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
+    use acadrust::entities::{Ellipse, LwPolyline, LwVertex, MText, Ray, Spline, XLine};
+    use acadrust::types::Vector3;
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let dir = std::env::temp_dir().join(dir_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("batch1.dwg");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = CadDocument::new();
+    let mut e = Ellipse::new();
+    e.center = Vector3::new(1.0, 2.0, 0.0);
+    e.major_axis = Vector3::new(5.0, 0.0, 0.0);
+    e.minor_axis_ratio = 0.5;
+    doc.add_entity(EntityType::Ellipse(e)).unwrap();
+
+    let mut m = MText::new();
+    m.value = "mt".to_string();
+    m.height = 2.0;
+    doc.add_entity(EntityType::MText(m)).unwrap();
+
+    let s = Spline::from_control_points(
+        3,
+        vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(2.0, 0.0, 0.0),
+            Vector3::new(3.0, 1.0, 0.0),
+            Vector3::new(4.0, 0.0, 0.0),
+        ],
+    );
+    doc.add_entity(EntityType::Spline(s)).unwrap();
+
+    let mut lw = LwPolyline::new();
+    lw.add_vertex(LwVertex::from_coords(0.0, 0.0));
+    lw.add_vertex(LwVertex::from_coords(10.0, 5.0));
+    doc.add_entity(EntityType::LwPolyline(lw)).unwrap();
+
+    let ray = Ray::default();
+    doc.add_entity(EntityType::Ray(ray)).unwrap();
+    let xl = XLine::default();
+    doc.add_entity(EntityType::XLine(xl)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+fn find_object_of_type(data: *mut DwgData, want: i32) -> *const DwgObject {
+    let mut err = 0;
+    let mut obj = unsafe { dwg_data_first_object(data, &mut err) };
+    while !obj.is_null() {
+        if unsafe { dwg_object_get_type(obj) } == want {
+            return obj;
+        }
+        obj = unsafe { dwg_object_next(obj) };
+    }
+    std::ptr::null()
+}
+
+#[test]
+fn batch1_geometry_getters() {
+    let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3b");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+
+    let ell = find_object_of_type(data, acadrust::ffi::DwgObjectType::Ellipse as i32);
+    assert!(!ell.is_null());
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    let mut cz = 0.0;
+    assert_eq!(unsafe { dwg_entity_ellipse_get_center(ell, &mut cx, &mut cy, &mut cz) }, DWG_OK);
+    assert!((cx - 1.0).abs() < 1e-9 && (cy - 2.0).abs() < 1e-9);
+    let mut ratio = 0.0;
+    assert_eq!(unsafe { dwg_entity_ellipse_get_minor_axis_ratio(ell, &mut ratio) }, DWG_OK);
+    assert!((ratio - 0.5).abs() < 1e-9);
+
+    let mtx = find_object_of_type(data, acadrust::ffi::DwgObjectType::MText as i32);
+    assert!(!mtx.is_null());
+    let mut needed = 0usize;
+    assert_eq!(unsafe { dwg_entity_mtext_get_value(mtx, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
+    assert_eq!(needed, 3);
+    let mut h = 0.0;
+    assert_eq!(unsafe { dwg_entity_mtext_get_height(mtx, &mut h) }, DWG_OK);
+    assert!((h - 2.0).abs() < 1e-9);
+
+    let sp = find_object_of_type(data, acadrust::ffi::DwgObjectType::Spline as i32);
+    assert!(!sp.is_null());
+    let mut degree = 0;
+    assert_eq!(unsafe { dwg_entity_spline_get_degree(sp, &mut degree) }, DWG_OK);
+    assert_eq!(degree, 3);
+    let mut count = 0;
+    assert_eq!(unsafe { dwg_entity_spline_get_control_point_count(sp, &mut count) }, DWG_OK);
+    assert!(count >= 3);
+
+    let lw = find_object_of_type(data, acadrust::ffi::DwgObjectType::LwPolyline as i32);
+    assert!(!lw.is_null());
+    let mut vcount = 0;
+    assert_eq!(unsafe { dwg_entity_lwpolyline_get_vertex_count(lw, &mut vcount) }, DWG_OK);
+    assert_eq!(vcount, 2);
+    let mut vx = 0.0;
+    let mut vy = 0.0;
+    assert_eq!(unsafe { dwg_entity_lwpolyline_get_vertex(lw, 1, &mut vx, &mut vy) }, DWG_OK);
+    assert!((vx - 10.0).abs() < 1e-9 && (vy - 5.0).abs() < 1e-9);
+
+    // Common getters on the line-family sample from the first document.
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}
