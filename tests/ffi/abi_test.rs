@@ -75,3 +75,50 @@ fn error_codes_match_c_header() {
     assert_eq!(DWG_EBUFFER, 7);
     assert_eq!(DWG_ETYPE, 8);
 }
+
+#[test]
+fn data_create_destroy_and_version() {
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    let rc = unsafe { dwg_data_create(&mut data) };
+    assert_eq!(rc, DWG_OK);
+    assert!(!data.is_null());
+
+    // Fresh documents default to the newest supported version (AC1032).
+    let expected = acadrust::CadDocument::new().version.as_str();
+    let mut buf = vec![0u8; expected.len() + 1];
+    let mut needed = 0usize;
+    let rc = unsafe { dwg_data_version(data, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) };
+    assert_eq!(rc, DWG_OK);
+    assert_eq!(needed, expected.len() + 1);
+    assert_eq!(&buf[..needed - 1], expected.as_bytes());
+
+    unsafe { dwg_data_destroy(data) };
+}
+
+#[test]
+fn data_helpers_validate_arguments() {
+    // NULL out pointer.
+    assert_eq!(unsafe { dwg_data_create(std::ptr::null_mut()) }, DWG_EINVAL);
+
+    // NULL data handle for version query.
+    let mut buf = [0u8; 16];
+    let mut needed = 0usize;
+    let rc = unsafe { dwg_data_version(
+        std::ptr::null(),
+        buf.as_mut_ptr() as *mut _,
+        buf.len(),
+        &mut needed,
+    ) };
+    assert_eq!(rc, DWG_EINVAL);
+
+    // Length-only query reports the version size without a buffer.
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    let rc = unsafe { dwg_data_version(data, std::ptr::null_mut(), 0, &mut needed) };
+    assert_eq!(rc, DWG_OK);
+    assert_eq!(needed, acadrust::CadDocument::new().version.as_str().len() + 1);
+    unsafe { dwg_data_destroy(data) };
+
+    // Destroying NULL is a no-op.
+    unsafe { dwg_data_destroy(std::ptr::null_mut()) };
+}
