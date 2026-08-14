@@ -1284,8 +1284,17 @@ impl<'a> DwgObjectWriter<'a> {
                             && self.document.dwg_source_version == Some(self.dxf_version)))
                         && self.document.classes.get_by_name("MATERIAL").is_some()
                 }
+                ObjectType::MultiLeaderStyle(_) => {
+                    (self.version.r2007_plus()
+                        || (self.version.r13_14_only()
+                            && self.document.dwg_source_version == Some(self.dxf_version)))
+                        && self.document.classes.get_by_name("MLEADERSTYLE").is_some()
+                }
                 ObjectType::TableStyle(_) => {
-                    self.document.classes.get_by_name("TABLESTYLE").is_some()
+                    (self.version.r2007_plus()
+                        || (self.version.r13_14_only()
+                            && self.document.dwg_source_version == Some(self.dxf_version)))
+                        && self.document.classes.get_by_name("TABLESTYLE").is_some()
                 }
                 ObjectType::Unknown { type_name, raw_dwg_data, raw_dwg_version, .. } => {
                     // Exclude types that would also be excluded if parsed into proper variants
@@ -1322,7 +1331,8 @@ impl<'a> DwgObjectWriter<'a> {
             dict.entries.iter().filter(|(name, h)| {
                 !matches!(name.as_str(),
                     "ACAD_PLOTSTYLENAME" | "ACAD_LAYOUT" | "ACAD_PLOTSETTINGS" |
-                    "ACAD_MATERIAL" | "ACAD_COLOR" | "ACAD_VISUALSTYLE"
+                    "ACAD_MATERIAL" | "ACAD_COLOR" | "ACAD_VISUALSTYLE" |
+                    "ACAD_MLEADERSTYLE" | "ACAD_TABLESTYLE"
                 ) && !h.is_null() && self.is_writable_object(h)
             }).collect()
         };
