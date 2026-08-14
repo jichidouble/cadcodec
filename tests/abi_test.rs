@@ -254,6 +254,77 @@ fn c_entity_batch1_compiles_links_and_runs() {
     );
 }
 
+fn write_entities_fixture() -> (CString, std::path::PathBuf) {
+    use acadrust::entities::{Circle, Ellipse, Hatch, HatchPattern, Line, LwPolyline, LwVertex, MText};
+    use acadrust::types::Vector3;
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let dir = std::env::temp_dir().join("acadrust_ffi_entities_fixture");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("entities.dwg");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = CadDocument::new();
+    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 10.0, 20.0, 30.0))).unwrap();
+    doc.add_entity(EntityType::Circle(Circle::from_center_radius(Vector3::new(5.0, 6.0, 0.0), 2.5))).unwrap();
+    let mut e = Ellipse::new();
+    e.center = Vector3::new(1.0, 2.0, 0.0);
+    e.major_axis = Vector3::new(5.0, 0.0, 0.0);
+    e.minor_axis_ratio = 0.5;
+    doc.add_entity(EntityType::Ellipse(e)).unwrap();
+    let mut m = MText::new();
+    m.value = "mt".to_string();
+    doc.add_entity(EntityType::MText(m)).unwrap();
+    let mut lw = LwPolyline::new();
+    lw.add_vertex(LwVertex::from_coords(0.0, 0.0));
+    lw.add_vertex(LwVertex::from_coords(10.0, 5.0));
+    doc.add_entity(EntityType::LwPolyline(lw)).unwrap();
+    let mut h = Hatch::new();
+    h.pattern = HatchPattern::new("SOLID");
+    doc.add_entity(EntityType::Hatch(h)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+#[test]
+fn c_entities_value_smoke() {
+    let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
+    if !dll.exists() {
+        eprintln!("SKIP: acadrust.dll not found; skipping C entities test");
+        return;
+    }
+    let (fixture, fixture_path) = write_entities_fixture();
+
+    let out_dir = std::env::temp_dir().join("acadrust_c_entities");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let exe = out_dir.join("c_entities.exe");
+    let src = std::path::Path::new(manifest).join("tests/ffi/c_entities.c");
+
+    let status = std::process::Command::new(&cc)
+        .arg(src.as_os_str())
+        .arg(dll.as_os_str())
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .expect("failed to launch C compiler");
+    assert!(status.success(), "C compile/link failed");
+
+    let out = std::process::Command::new(&exe)
+        .arg(fixture.as_c_str().to_str().unwrap())
+        .output()
+        .expect("failed to run c_entities");
+    assert!(
+        out.status.success(),
+        "c_entities exited with {:?}: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&fixture_path);
+}
+
 #[test]
 fn iterate_sample_document_via_abi() {
     let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_iter");
