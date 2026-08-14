@@ -82,7 +82,11 @@ fn dwg_roundtrip_file() {
 fn read_missing_file_reports_error() {
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    let missing = CString::new("Z:\\definitely_missing_file_xyz.dwg").unwrap();
+    let dir = std::env::temp_dir().join("acadrust_ffi_p1");
+    std::fs::create_dir_all(&dir).unwrap();
+    let missing_path = dir.join("definitely_missing_file_xyz.dwg");
+    let _ = std::fs::remove_file(&missing_path);
+    let missing = CString::new(missing_path.to_str().unwrap()).unwrap();
     let rc = unsafe { dwg_read_file(missing.as_ptr(), data) };
     assert_eq!(rc, DWG_EREAD);
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_EREAD);
@@ -97,6 +101,7 @@ fn c_smoke_compiles_links_and_runs() {
     let dll = std::path::Path::new(manifest).join("target/debug/acadrust.dll");
     if !dll.exists() {
         // cdylib not built for this configuration; nothing to link against.
+        eprintln!("SKIP: acadrust.dll not found; skipping C smoke test");
         return;
     }
     let out_dir = std::env::temp_dir().join("acadrust_c_smoke");

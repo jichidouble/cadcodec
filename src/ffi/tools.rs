@@ -3,7 +3,9 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-const VERSION: &str = concat!("acadrust-", env!("CARGO_PKG_VERSION"), "-ffi");
+/// NUL-terminated version string for `dwg_version`. The explicit trailing
+/// `\0` guarantees the pointer returned to C is a valid C string.
+const VERSION: &[u8] = concat!("acadrust-", env!("CARGO_PKG_VERSION"), "-ffi\0").as_bytes();
 
 /// Return the library version as a NUL-terminated static string.
 #[no_mangle]

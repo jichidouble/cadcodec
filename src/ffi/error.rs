@@ -20,7 +20,12 @@ pub(crate) fn clear_last_error() {
 
 /// Copy the current thread's last error message into `buf` (caller-owned).
 /// `needed` receives the total bytes required including the NUL terminator.
-/// Returns the error code that was stored, or `DWG_OK` when none is pending.
+///
+/// Return value is the error code that was stored (`DWG_OK` when none is
+/// pending), matching `dwg_last_error_code`; callers that only need the code
+/// may use `dwg_last_error_code` directly, callers that need the message use
+/// this function. The slot is sticky: it is only replaced by the next failed
+/// operation and cleared by the next successful one.
 #[no_mangle]
 pub extern "C" fn dwg_last_error(buf: *mut i8, cap: usize, needed: *mut usize) -> i32 {
     if needed.is_null() || (!buf.is_null() && cap == 0) {

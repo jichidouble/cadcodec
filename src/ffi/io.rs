@@ -1,6 +1,6 @@
 //! DWG/DXF file read/write through the C ABI.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 
@@ -106,8 +106,3 @@ pub extern "C" fn dxf_read_file(path: *const c_char, data: *mut DwgData) -> i32 
 pub extern "C" fn dxf_write_file(path: *const c_char, data: *const DwgData) -> i32 {
     write_impl(path, data, false)
 }
-
-/// Helper to keep the linker from dropping unused CString import on
-/// some targets.
-#[allow(dead_code)]
-fn _keep(_s: CString) {}

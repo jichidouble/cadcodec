@@ -30,8 +30,9 @@ pub unsafe extern "C" fn dwg_data_destroy(data: *mut DwgData) {
     drop(Box::from_raw(data as *mut CadDocument));
 }
 
-/// Copy the document's DWG version string (e.g. "UNKNOWN") into `buf`
-/// (caller-owned). `needed` receives the total bytes required including NUL.
+/// Copy the document's DWG version string (e.g. "AC1032"; a fresh document
+/// created by `dwg_data_create` is AC1032) into `buf` (caller-owned).
+/// `needed` receives the total bytes required including NUL.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_data_version(
     data: *const DwgData,
