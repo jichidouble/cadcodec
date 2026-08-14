@@ -197,3 +197,74 @@ fn fresh_document_object_graph_has_default_objects() {
     assert_eq!(unsafe { dwg_object_get_type(first) }, acadrust::ffi::DwgObjectType::Other as i32);
     unsafe { dwg_data_destroy(data) };
 }
+
+fn open_sample_document() -> (*mut DwgData, std::path::PathBuf) {
+    let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_entity");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+    (data, path_buf)
+}
+
+#[test]
+fn line_and_circle_getters_return_values() {
+    let (data, path_buf) = open_sample_document();
+    let mut err = 0;
+    let line = unsafe { dwg_data_first_object(data, &mut err) };
+    assert_eq!(err, DWG_OK);
+
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    let rc = unsafe { dwg_entity_line_get_start(line, &mut x, &mut y, &mut z) };
+    assert_eq!(rc, DWG_OK);
+    assert!((x - 0.0).abs() < 1e-9);
+    assert!((y - 0.0).abs() < 1e-9);
+    assert!((z - 0.0).abs() < 1e-9);
+
+    let rc = unsafe { dwg_entity_line_get_end(line, &mut x, &mut y, &mut z) };
+    assert_eq!(rc, DWG_OK);
+    assert!((x - 1.0).abs() < 1e-9);
+    assert!((y - 2.0).abs() < 1e-9);
+    assert!((z - 3.0).abs() < 1e-9);
+
+    // Wrong family must report DWG_ETYPE.
+    let mut r = 0.0;
+    let rc = unsafe { dwg_entity_circle_get_radius(line, &mut r) };
+    assert_eq!(rc, DWG_ETYPE);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}
+
+#[test]
+fn text_getter_reads_value_with_buffer_protocol() {
+    let (data, path_buf) = open_sample_document();
+    let mut err = 0;
+    let mut obj = unsafe { dwg_data_first_object(data, &mut err) };
+    // Walk to the TEXT entity.
+    while !obj.is_null() && unsafe { dwg_object_get_type(obj) } != acadrust::ffi::DwgObjectType::Text as i32
+    {
+        obj = unsafe { dwg_object_next(obj) };
+    }
+    assert!(!obj.is_null(), "sample document must contain a TEXT entity");
+
+    // Length query.
+    let mut needed = 0usize;
+    let rc = unsafe { dwg_entity_text_get_value(obj, std::ptr::null_mut(), 0, &mut needed) };
+    assert_eq!(rc, DWG_OK);
+    assert_eq!(needed, 6); // "hello" + NUL
+
+    let mut buf = [0u8; 6];
+    let rc = unsafe { dwg_entity_text_get_value(obj, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) };
+    assert_eq!(rc, DWG_OK);
+    assert_eq!(&buf[..needed - 1], b"hello");
+
+    let mut h = 0.0;
+    let rc = unsafe { dwg_entity_text_get_height(obj, &mut h) };
+    assert_eq!(rc, DWG_OK);
+    assert!((h - 1.0).abs() < 1e-9);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}

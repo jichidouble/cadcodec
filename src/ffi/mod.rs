@@ -11,6 +11,7 @@ pub mod data;
 pub mod io;
 pub mod object;
 pub mod iterate;
+pub mod entity;
 
 pub use types::*;
 pub use error::*;
@@ -19,3 +20,4 @@ pub use data::*;
 pub use io::*;
 pub use object::*;
 pub use iterate::*;
+pub use entity::*;
