@@ -806,3 +806,63 @@ fn batch3_annotation_text_getters() {
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(&path_buf);
 }
+
+fn write_batch4_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
+    use acadrust::entities::{Dimension, DimensionLinear, RasterImage};
+    use acadrust::types::{Vector2, Vector3};
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let dir = std::env::temp_dir().join(dir_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("batch4.dwg");
+    let _ = std::fs::remove_file(&path);
+
+    let mut doc = CadDocument::new();
+    let dim = DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
+    doc.add_entity(EntityType::Dimension(Dimension::Linear(dim))).unwrap();
+
+    let mut img = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 640.0, 480.0);
+    doc.add_entity(EntityType::RasterImage(img)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+#[test]
+fn batch4_dimension_image_getters() {
+    let (path, path_buf) = write_batch4_dwg("acadrust_ffi_p3b4");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+
+    let dim = find_object_of_type(data, acadrust::ffi::DwgObjectType::Dimension as i32);
+    assert!(!dim.is_null());
+    let mut subtype = 0;
+    assert_eq!(unsafe { dwg_entity_dimension_get_subtype(dim, &mut subtype) }, DWG_OK);
+    assert_eq!(subtype, 2); // Linear
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    assert_eq!(unsafe { dwg_entity_dimension_get_definition_point(dim, &mut x, &mut y, &mut z) }, DWG_OK);
+    assert!((x - 0.0).abs() < 1e-9 && (y - 0.0).abs() < 1e-9);
+    let mut needed = 0usize;
+    let mut buf = [0u8; 64];
+    assert_eq!(
+        unsafe { dwg_entity_dimension_get_style_name(dim, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
+        DWG_OK
+    );
+    assert_eq!(&buf[..needed - 1], b"Standard");
+    let mut m = 0.0;
+    assert_eq!(unsafe { dwg_entity_dimension_get_measurement(dim, &mut m) }, DWG_OK);
+    assert!(m > 0.0);
+
+    let img = find_object_of_type(data, acadrust::ffi::DwgObjectType::RasterImage as i32);
+    assert!(!img.is_null());
+    let mut w = 0.0;
+    let mut h = 0.0;
+    assert_eq!(unsafe { dwg_entity_raster_image_get_size(img, &mut w, &mut h) }, DWG_OK);
+    assert!((w - 640.0).abs() < 1e-9 && (h - 480.0).abs() < 1e-9);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(&path_buf);
+}

@@ -1,6 +1,6 @@
 //! Typed getters for the basic entity families (Phase 2).
 
-use crate::entities::{Arc, AttributeDefinition, Circle, Ellipse, EntityType, Face3D, Hatch, Helix, Insert, Leader, Line, LwPolyline, MLine, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, Ray, Shape, Solid, Spline, Text, Tolerance, Viewport, XLine};
+use crate::entities::{Arc, AttributeDefinition, Circle, Dimension, Ellipse, EntityType, Face3D, Hatch, Helix, Insert, Leader, Light, Line, LwPolyline, MLine, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, RasterImage, Ray, Shape, Solid, Spline, Text, Tolerance, Underlay, Viewport, Wipeout, XLine};
 use crate::ffi::object::FfiObject;
 use crate::ffi::types::*;
 use crate::ffi::util::{color_to_c, copy_c_string};
@@ -198,6 +198,41 @@ fn as_helix<'a>(obj: *const DwgObject) -> Result<&'a Helix, i32> {
     }
 }
 
+fn as_dimension<'a>(obj: *const DwgObject) -> Result<&'a Dimension, i32> {
+    match as_entity(obj)? {
+        EntityType::Dimension(d) => Ok(d),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_raster_image<'a>(obj: *const DwgObject) -> Result<&'a RasterImage, i32> {
+    match as_entity(obj)? {
+        EntityType::RasterImage(r) => Ok(r),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_underlay<'a>(obj: *const DwgObject) -> Result<&'a Underlay, i32> {
+    match as_entity(obj)? {
+        EntityType::Underlay(u) => Ok(u),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_light<'a>(obj: *const DwgObject) -> Result<&'a Light, i32> {
+    match as_entity(obj)? {
+        EntityType::Light(l) => Ok(l),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
+fn as_wipeout<'a>(obj: *const DwgObject) -> Result<&'a Wipeout, i32> {
+    match as_entity(obj)? {
+        EntityType::Wipeout(w) => Ok(w),
+        _ => Err(DWG_ETYPE),
+    }
+}
+
 fn write_vec3(v: &crate::types::Vector3, x: *mut f64, y: *mut f64, z: *mut f64) -> i32 {
     if x.is_null() || y.is_null() || z.is_null() {
         return DWG_EINVAL;
@@ -286,6 +321,10 @@ f64_getter!(dwg_entity_helix_get_turns, as_helix, turns);
 f64_getter!(dwg_entity_helix_get_turn_height, as_helix, turn_height);
 vec3_getter!(dwg_entity_mline_get_start_point, as_mline, start_point);
 f64_getter!(dwg_entity_mline_get_scale_factor, as_mline, scale_factor);
+vec3_getter!(dwg_entity_raster_image_get_insertion_point, as_raster_image, insertion_point);
+vec3_getter!(dwg_entity_underlay_get_insertion_point, as_underlay, insertion_point);
+vec3_getter!(dwg_entity_light_get_position, as_light, position);
+vec3_getter!(dwg_entity_wipeout_get_insertion_point, as_wipeout, insertion_point);
 
 /// Copy the TEXT entity's value into a caller-owned buffer.
 #[no_mangle]
@@ -696,6 +735,109 @@ string_field_getter!(dwg_entity_attrdef_get_tag, as_attribute_definition, tag);
 string_field_getter!(dwg_entity_attrdef_get_prompt, as_attribute_definition, prompt);
 string_field_getter!(dwg_entity_attrdef_get_default_value, as_attribute_definition, default_value);
 string_field_getter!(dwg_entity_mline_get_style_name, as_mline, style_name);
+
+/// Copy the DIMENSION style name into a caller-owned buffer.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_get_style_name(
+    obj: *const DwgObject,
+    buf: *mut i8,
+    cap: usize,
+    needed: *mut usize,
+) -> i32 {
+    match as_dimension(obj) {
+        Ok(d) => copy_c_string(&d.base().style_name, buf, cap, needed),
+        Err(code) => code,
+    }
+}
+
+/// Read the DIMENSION definition point (WCS).
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_get_definition_point(
+    obj: *const DwgObject,
+    x: *mut f64,
+    y: *mut f64,
+    z: *mut f64,
+) -> i32 {
+    match as_dimension(obj) {
+        Ok(d) => write_vec3(&d.base().definition_point, x, y, z),
+        Err(code) => code,
+    }
+}
+
+/// Read the DIMENSION text middle point (WCS).
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_get_text_middle_point(
+    obj: *const DwgObject,
+    x: *mut f64,
+    y: *mut f64,
+    z: *mut f64,
+) -> i32 {
+    match as_dimension(obj) {
+        Ok(d) => write_vec3(&d.base().text_middle_point, x, y, z),
+        Err(code) => code,
+    }
+}
+
+/// Read the DIMENSION subtype (1 Aligned, 2 Linear, 3 Radius, 4 Diameter,
+/// 5 Angular2Ln, 6 Angular3Pt, 7 Ordinate, 8 Arc, 9 LargeRadial).
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_get_subtype(obj: *const DwgObject, subtype: *mut i32) -> i32 {
+    if subtype.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_dimension(obj) {
+        Ok(d) => {
+            *subtype = match d {
+                Dimension::Aligned(_) => 1,
+                Dimension::Linear(_) => 2,
+                Dimension::Radius(_) => 3,
+                Dimension::Diameter(_) => 4,
+                Dimension::Angular2Ln(_) => 5,
+                Dimension::Angular3Pt(_) => 6,
+                Dimension::Ordinate(_) => 7,
+                Dimension::Arc(_) => 8,
+                Dimension::LargeRadial(_) => 9,
+            };
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
+/// Read the DIMENSION measurement value.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_get_measurement(obj: *const DwgObject, value: *mut f64) -> i32 {
+    if value.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_dimension(obj) {
+        Ok(d) => {
+            *value = d.measurement();
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
+/// Read the RASTERIMAGE pixel size (width/height).
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_raster_image_get_size(
+    obj: *const DwgObject,
+    width: *mut f64,
+    height: *mut f64,
+) -> i32 {
+    if width.is_null() || height.is_null() {
+        return DWG_EINVAL;
+    }
+    match as_raster_image(obj) {
+        Ok(r) => {
+            *width = r.size.x;
+            *height = r.size.y;
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
 
 /// Copy the HATCH pattern name into a caller-owned buffer.
 #[no_mangle]

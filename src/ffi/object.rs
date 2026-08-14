@@ -43,6 +43,11 @@ pub enum DwgObjectType {
     AttributeDefinition = 24,
     Shape = 25,
     Helix = 26,
+    Dimension = 27,
+    RasterImage = 28,
+    Underlay = 29,
+    Light = 30,
+    Wipeout = 31,
     Other = 1000,
 }
 
@@ -89,6 +94,11 @@ fn entity_kind(e: &EntityType) -> DwgObjectType {
         EntityType::AttributeDefinition(_) => DwgObjectType::AttributeDefinition,
         EntityType::Shape(_) => DwgObjectType::Shape,
         EntityType::Helix(_) => DwgObjectType::Helix,
+        EntityType::Dimension(_) => DwgObjectType::Dimension,
+        EntityType::RasterImage(_) => DwgObjectType::RasterImage,
+        EntityType::Underlay(_) => DwgObjectType::Underlay,
+        EntityType::Light(_) => DwgObjectType::Light,
+        EntityType::Wipeout(_) => DwgObjectType::Wipeout,
         _ => DwgObjectType::Other,
     }
 }
