@@ -28,3 +28,6 @@ Thumbs.db
 /docs/site/
 
 /ACadSharp-master/
+
+# Git worktrees
+/.worktrees/
