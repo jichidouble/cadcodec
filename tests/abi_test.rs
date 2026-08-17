@@ -584,6 +584,88 @@ fn find_object_of_type(data: *mut DwgData, want: i32) -> *const DwgObject {
 }
 
 #[test]
+fn common_entity_setters_roundtrip_through_getters() {
+    let (data, path) = open_sample_document();
+    let line = find_object_of_type(data, DwgObjectType::Line as i32);
+    assert!(!line.is_null());
+    let layer = CString::new("P3C_LAYER").unwrap();
+    let linetype = CString::new("DASHED").unwrap();
+
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, layer.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_color(data, line, 0x00112233) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 2.5) }, DWG_OK);
+
+    let mut needed = 0;
+    assert_eq!(unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
+    let mut layer_buf = vec![0_i8; needed];
+    assert_eq!(unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }.to_str().unwrap(), "P3C_LAYER");
+
+    assert_eq!(unsafe { dwg_entity_get_linetype(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
+    let mut linetype_buf = vec![0_i8; needed];
+    assert_eq!(unsafe { dwg_entity_get_linetype(line, linetype_buf.as_mut_ptr(), linetype_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(linetype_buf.as_ptr()) }.to_str().unwrap(), "DASHED");
+
+    let mut color = 0;
+    let mut scale = 0.0;
+    assert_eq!(unsafe { dwg_entity_get_color(line, &mut color) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_get_linetype_scale(line, &mut scale) }, DWG_OK);
+    assert_eq!(color, 0x00112233);
+    assert_eq!(scale, 2.5);
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn common_entity_setters_reject_invalid_inputs_without_corruption() {
+    let (data, path) = open_sample_document();
+    let line = find_object_of_type(data, DwgObjectType::Line as i32);
+    let stable_layer = CString::new("P3C_STABLE_LAYER").unwrap();
+    let stable_linetype = CString::new("CONTINUOUS").unwrap();
+    let empty_linetype = CString::new("").unwrap();
+    assert!(!line.is_null());
+
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, empty_linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, stable_layer.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_color(data, line, 0x00010203) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, stable_linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 3.0) }, DWG_OK);
+
+    assert_eq!(unsafe { dwg_entity_set_layer(std::ptr::null_mut(), line, stable_layer.as_ptr()) }, DWG_EINVAL);
+    assert_eq!(dwg_last_error_code(), DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_color(data, std::ptr::null(), 0) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, std::ptr::null()) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, empty_linetype.as_ptr()) }, DWG_EINVAL);
+    let invalid_utf8 = [0xff_u8, 0];
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, invalid_utf8.as_ptr().cast()) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, f64::NAN) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 0.0) }, DWG_EINVAL);
+
+    let (foreign_data, foreign_path) = open_sample_document();
+    let foreign_line = find_object_of_type(foreign_data, DwgObjectType::Line as i32);
+    assert_eq!(unsafe { dwg_entity_set_color(data, foreign_line, 0x00ABCDEF) }, DWG_ENOTFOUND);
+
+    let mut needed = 0;
+    assert_eq!(unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
+    let mut layer_buf = vec![0_i8; needed];
+    assert_eq!(unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }.to_str().unwrap(), "P3C_STABLE_LAYER");
+    let mut color = 0;
+    let mut scale = 0.0;
+    assert_eq!(unsafe { dwg_entity_get_color(line, &mut color) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_get_linetype_scale(line, &mut scale) }, DWG_OK);
+    assert_eq!(color, 0x00010203);
+    assert_eq!(scale, 3.0);
+
+    unsafe { dwg_data_destroy(foreign_data) };
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(foreign_path);
+}
+
+#[test]
 fn batch1_geometry_getters() {
     let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3b");
     let mut data: *mut DwgData = std::ptr::null_mut();
