@@ -9,6 +9,8 @@ use std::ptr;
 
 use crate::document::CadDocument;
 use crate::entities::{Entity, EntityType};
+use crate::ffi::error::{clear_last_error, set_last_error};
+use crate::ffi::types::{DwgObject, DWG_EINVAL, DWG_ENOTFOUND, DWG_ETYPE, DWG_OK};
 use crate::objects::ObjectType;
 use crate::types::Handle;
 
@@ -65,6 +67,9 @@ pub struct FfiDocument {
     pub doc: CadDocument,
     pub objects: Vec<Box<FfiObject>>,
 }
+
+#[allow(dead_code)]
+pub(crate) type MutationError = (i32, &'static str);
 
 fn entity_kind(e: &EntityType) -> DwgObjectType {
     match e {
@@ -140,6 +145,59 @@ impl FfiDocument {
         }
         FfiDocument { doc, objects }
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn mutate_entity<F>(
+        &mut self,
+        obj: *const DwgObject,
+        expected: Option<DwgObjectType>,
+        mutate: F,
+    ) -> i32
+    where
+        F: FnOnce(&mut EntityType) -> Result<(), MutationError>,
+    {
+        if obj.is_null() {
+            set_last_error(DWG_EINVAL, "object pointer is null");
+            return DWG_EINVAL;
+        }
+        let Some(index) = self.objects.iter().position(|candidate| {
+            let candidate = candidate.as_ref() as *const FfiObject as *const DwgObject;
+            std::ptr::eq(candidate, obj)
+        }) else {
+            set_last_error(DWG_ENOTFOUND, "object does not belong to document");
+            return DWG_ENOTFOUND;
+        };
+        if self.objects[index].entity.is_null() {
+            set_last_error(DWG_ETYPE, "object is not an entity");
+            return DWG_ETYPE;
+        }
+        if expected.is_some_and(|kind| self.objects[index].kind != kind) {
+            set_last_error(DWG_ETYPE, "entity type does not match setter");
+            return DWG_ETYPE;
+        }
+
+        let handle = self.objects[index].handle;
+        let result = match self.doc.get_entity_mut(handle) {
+            Some(entity) => mutate(entity),
+            None => Err((DWG_ENOTFOUND, "entity handle is missing from document")),
+        };
+        let Some(entity) = self.doc.get_entity(handle) else {
+            set_last_error(DWG_ENOTFOUND, "entity disappeared during mutation");
+            return DWG_ENOTFOUND;
+        };
+        self.objects[index].entity = entity as *const EntityType;
+
+        match result {
+            Ok(()) => {
+                clear_last_error();
+                DWG_OK
+            }
+            Err((code, message)) => {
+                set_last_error(code, message);
+                code
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +241,48 @@ mod tests {
         }
         assert!(count >= 3, "walk should cover at least the entities");
         assert_eq!(count, ffi.objects.len());
+    }
+
+    #[test]
+    fn mutation_refreshes_entity_pointer_without_moving_object_handle() {
+        let mut ffi = FfiDocument::new(sample_doc());
+        let handle = ffi.objects[0].handle;
+        let obj = ffi.objects[0].as_ref() as *const FfiObject as *const DwgObject;
+        let old_entity = ffi.objects[0].entity;
+        let held_old_arc = ffi.doc.get_entity_arc(handle).unwrap();
+
+        let rc = ffi.mutate_entity(obj, Some(DwgObjectType::Line), |entity| {
+            let EntityType::Line(line) = entity else {
+                return Err((DWG_ETYPE, "expected LINE"));
+            };
+            line.start = Vector3::new(9.0, 8.0, 7.0);
+            Ok(())
+        });
+
+        assert_eq!(rc, DWG_OK);
+        assert_eq!(
+            obj,
+            ffi.objects[0].as_ref() as *const FfiObject as *const DwgObject
+        );
+        assert_ne!(old_entity, ffi.objects[0].entity);
+        assert_eq!(held_old_arc.as_ref().common().handle, handle);
+        let EntityType::Line(line) = (unsafe { &*ffi.objects[0].entity }) else {
+            panic!()
+        };
+        assert_eq!(line.start, Vector3::new(9.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn mutation_rejects_foreign_and_wrong_type_objects() {
+        let mut left = FfiDocument::new(sample_doc());
+        let right = FfiDocument::new(sample_doc());
+        let foreign = right.objects[0].as_ref() as *const FfiObject as *const DwgObject;
+        assert_eq!(left.mutate_entity(foreign, None, |_| Ok(())), DWG_ENOTFOUND);
+
+        let local = left.objects[0].as_ref() as *const FfiObject as *const DwgObject;
+        assert_eq!(
+            left.mutate_entity(local, Some(DwgObjectType::Circle), |_| Ok(())),
+            DWG_ETYPE
+        );
     }
 }
