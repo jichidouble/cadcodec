@@ -6,8 +6,9 @@ P3c 为现有 C ABI 实体读取面补齐写能力，使 C 调用者可以修改
 `dwg_entity_*_get_*` getter 所暴露的全部可写数据，并将修改结果可靠写回 DWG/DXF。
 
 本阶段不新增或删除文档实体，不改变实体类型，不实现 P4 的 Dictionary、XRECORD、
-EED、ACIS、内存字节流或通知回调。实体 handle、对象类型、集合 count 和 Dimension
-subtype 是身份或结构元数据，保持只读；集合通过元素更新及 append/remove/clear 写入。
+EED、ACIS、内存字节流或通知回调。实体 handle、对象类型、集合 count、Dimension
+subtype 和 Dimension measurement 是身份、结构或派生元数据，保持只读；集合通过元素
+更新及 append/remove/clear 写入。
 
 ## 2. 当前基线
 
@@ -78,8 +79,8 @@ int dwg_entity_line_set_start(
 
 复合字段保持一次调用原子更新，例如 `dwg_entity_insert_set_array` 同时接收列数、
 行数及两个间距，`dwg_entity_raster_image_set_size` 同时接收宽高。corner 参数继续使用
-现有的 `1..=4` 约定。Dimension measurement 可写；Dimension subtype 表示 Rust 枚举
-变体，保持只读。
+现有的 `1..=4` 约定。Dimension subtype 表示 Rust 枚举变体，measurement 由各子类型的
+几何点实时计算，二者均保持只读。
 
 ### 5.3 集合字段
 
