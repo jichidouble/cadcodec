@@ -12,6 +12,7 @@ use crate::types::Vector3;
 macro_rules! vec3_setter {
     ($name:ident, $kind:ident, $entity:ident, $field:ident) => {
         #[doc = concat!("Set the ", stringify!($field), " vector of a ", stringify!($kind), " entity.")]
+        #[doc = "\n# Safety\n\n`data` must be a valid document pointer and `obj` must be a valid entity object from that document."]
         #[no_mangle]
         pub unsafe extern "C" fn $name(
             data: *mut DwgData,
@@ -76,6 +77,7 @@ macro_rules! f64_setter {
     };
     (@impl $name:ident, $kind:ident, $entity:ident, $field:ident, $message:literal, $validator:ident) => {
         #[doc = concat!("Set the ", stringify!($field), " scalar of a ", stringify!($kind), " entity.")]
+        #[doc = "\n# Safety\n\n`data` must be a valid document pointer and `obj` must be a valid entity object from that document."]
         #[no_mangle]
         pub unsafe extern "C" fn $name(data: *mut DwgData, obj: *const DwgObject, value: f64) -> i32 {
             if data.is_null() {
@@ -109,7 +111,21 @@ fn valid_minor_axis_ratio(value: f64) -> bool {
     finite(value) && value > 0.0 && value <= 1.0
 }
 
+fn normalize_direction(x: f64, y: f64, z: f64) -> Vector3 {
+    let scale = x.abs().max(y.abs()).max(z.abs());
+    let x = x / scale;
+    let y = y / scale;
+    let z = z / scale;
+    let length = (x * x + y * y + z * z).sqrt();
+    Vector3::new(x / length, y / length, z / length)
+}
+
 /// Set an entity's layer name.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer, `obj` must be a valid entity object from that
+/// document, and `value` must point to a valid NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_set_layer(
     data: *mut DwgData,
@@ -135,6 +151,11 @@ pub unsafe extern "C" fn dwg_entity_set_layer(
 }
 
 /// Set an entity's color using the C ABI color encoding.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid entity object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_set_color(
     data: *mut DwgData,
@@ -152,6 +173,11 @@ pub unsafe extern "C" fn dwg_entity_set_color(
 }
 
 /// Set an entity's linetype name.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer, `obj` must be a valid entity object from that
+/// document, and `value` must point to a valid NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_set_linetype(
     data: *mut DwgData,
@@ -173,6 +199,11 @@ pub unsafe extern "C" fn dwg_entity_set_linetype(
 }
 
 /// Set an entity's positive, finite linetype scale.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid entity object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_set_linetype_scale(
     data: *mut DwgData,
@@ -238,6 +269,11 @@ vec3_setter!(dwg_entity_ray_set_base_point, Ray, Ray, base_point);
 vec3_setter!(dwg_entity_xline_set_base_point, XLine, XLine, base_point);
 
 /// Set a RAY entity's normalized direction vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid RAY object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_ray_set_direction(
     data: *mut DwgData,
@@ -258,12 +294,17 @@ pub unsafe extern "C" fn dwg_entity_ray_set_direction(
         let EntityType::Ray(ray) = entity else {
             return Err((DWG_ETYPE, "entity type does not match setter"));
         };
-        ray.direction = Vector3::new(x, y, z).normalize();
+        ray.direction = normalize_direction(x, y, z);
         Ok(())
     })
 }
 
 /// Set an XLINE entity's normalized direction vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid XLINE object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_xline_set_direction(
     data: *mut DwgData,
@@ -287,13 +328,18 @@ pub unsafe extern "C" fn dwg_entity_xline_set_direction(
             let EntityType::XLine(xline) = entity else {
                 return Err((DWG_ETYPE, "entity type does not match setter"));
             };
-            xline.direction = Vector3::new(x, y, z).normalize();
+            xline.direction = normalize_direction(x, y, z);
             Ok(())
         },
     )
 }
 
 /// Set one of a SOLID entity's four corners (`corner` 1..=4).
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SOLID object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_solid_set_corner(
     data: *mut DwgData,
@@ -336,6 +382,11 @@ pub unsafe extern "C" fn dwg_entity_solid_set_corner(
 }
 
 /// Set one of a 3DFACE entity's four corners (`corner` 1..=4).
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid 3DFACE object from that
+/// document.
 #[no_mangle]
 pub unsafe extern "C" fn dwg_entity_face3d_set_corner(
     data: *mut DwgData,

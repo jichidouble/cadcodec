@@ -1,7 +1,10 @@
-//! ABI-level tests calling the exported extern "C" symbols directly.
+﻿//! ABI-level tests calling the exported extern "C" symbols directly.
 
 use acadrust::ffi::*;
 use std::ffi::CString;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static SAMPLE_DWG_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Locate the cdylib the C smoke tests link against. Preference order:
 /// 1. `ACADRUST_DLL` env var, 2. GNU release build, 3. any debug fallback.
@@ -32,27 +35,29 @@ fn write_sample_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
 
-    let dir = std::env::temp_dir().join(dir_name);
+    let suffix = SAMPLE_DWG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("{dir_name}_{}_{}", std::process::id(), suffix));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("sample.dwg");
-    let _ = std::fs::remove_file(&path);
 
     let mut doc = CadDocument::new();
-    doc.add_entity(EntityType::Line(Line::from_coords(
-        0.0, 0.0, 0.0, 1.0, 2.0, 3.0,
-    )))
-    .unwrap();
-    doc.add_entity(EntityType::Circle(Circle::from_center_radius(
-        Vector3::new(5.0, 6.0, 0.0),
-        2.5,
-    )))
-    .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 2.0, 3.0))).unwrap();
+    doc.add_entity(EntityType::Circle(Circle::from_center_radius(Vector3::new(5.0, 6.0, 0.0), 2.5))).unwrap();
     let mut t = Text::new();
     t.value = "hello".to_string();
     t.height = 1.0;
     doc.add_entity(EntityType::Text(t)).unwrap();
     DwgWriter::write_to_file(&path, &doc).unwrap();
     (CString::new(path.to_str().unwrap()).unwrap(), path)
+}
+
+#[test]
+fn sample_dwg_paths_are_unique_per_invocation() {
+    let (_, first) = write_sample_dwg("acadrust_ffi_unique_fixture");
+    let (_, second) = write_sample_dwg("acadrust_ffi_unique_fixture");
+    assert_ne!(first, second);
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
 }
 
 #[test]
@@ -284,9 +289,7 @@ fn c_entity_batch1_compiles_links_and_runs() {
 }
 
 fn write_entities_fixture() -> (CString, std::path::PathBuf) {
-    use acadrust::entities::{
-        Circle, Ellipse, Hatch, HatchPattern, Line, LwPolyline, LwVertex, MText,
-    };
+    use acadrust::entities::{Circle, Ellipse, Hatch, HatchPattern, Line, LwPolyline, LwVertex, MText};
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
 
@@ -296,15 +299,8 @@ fn write_entities_fixture() -> (CString, std::path::PathBuf) {
     let _ = std::fs::remove_file(&path);
 
     let mut doc = CadDocument::new();
-    doc.add_entity(EntityType::Line(Line::from_coords(
-        0.0, 0.0, 0.0, 10.0, 20.0, 30.0,
-    )))
-    .unwrap();
-    doc.add_entity(EntityType::Circle(Circle::from_center_radius(
-        Vector3::new(5.0, 6.0, 0.0),
-        2.5,
-    )))
-    .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 10.0, 20.0, 30.0))).unwrap();
+    doc.add_entity(EntityType::Circle(Circle::from_center_radius(Vector3::new(5.0, 6.0, 0.0), 2.5))).unwrap();
     let mut e = Ellipse::new();
     e.center = Vector3::new(1.0, 2.0, 0.0);
     e.major_axis = Vector3::new(5.0, 0.0, 0.0);
@@ -405,10 +401,7 @@ fn fresh_document_object_graph_has_default_objects() {
     // CadDocument::new() installs default objects (dictionaries, styles...),
     // so the object graph is never empty; the first object is non-entity.
     assert!(!first.is_null());
-    assert_eq!(
-        unsafe { dwg_object_get_type(first) },
-        acadrust::ffi::DwgObjectType::Other as i32
-    );
+    assert_eq!(unsafe { dwg_object_get_type(first) }, acadrust::ffi::DwgObjectType::Other as i32);
     unsafe { dwg_data_destroy(data) };
 }
 
@@ -457,8 +450,7 @@ fn text_getter_reads_value_with_buffer_protocol() {
     let mut err = 0;
     let mut obj = unsafe { dwg_data_first_object(data, &mut err) };
     // Walk to the TEXT entity.
-    while !obj.is_null()
-        && unsafe { dwg_object_get_type(obj) } != acadrust::ffi::DwgObjectType::Text as i32
+    while !obj.is_null() && unsafe { dwg_object_get_type(obj) } != acadrust::ffi::DwgObjectType::Text as i32
     {
         obj = unsafe { dwg_object_next(obj) };
     }
@@ -471,9 +463,7 @@ fn text_getter_reads_value_with_buffer_protocol() {
     assert_eq!(needed, 6); // "hello" + NUL
 
     let mut buf = [0u8; 6];
-    let rc = unsafe {
-        dwg_entity_text_get_value(obj, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed)
-    };
+    let rc = unsafe { dwg_entity_text_get_value(obj, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) };
     assert_eq!(rc, DWG_OK);
     assert_eq!(&buf[..needed - 1], b"hello");
 
@@ -503,17 +493,11 @@ fn layer_color_roundtrip_via_abi() {
 
     let name = CString::new("0").unwrap();
     let mut idx = -1;
-    assert_eq!(
-        unsafe { dwg_layer_index_by_name(data, name.as_ptr(), &mut idx) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_layer_index_by_name(data, name.as_ptr(), &mut idx) }, DWG_OK);
     assert_eq!(idx, 0);
 
     let mut handle = 0u64;
-    assert_eq!(
-        unsafe { dwg_layer_get_handle(data, 0, &mut handle) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_layer_get_handle(data, 0, &mut handle) }, DWG_OK);
     assert!(handle != 0);
 
     // Out of range index.
@@ -529,36 +513,23 @@ fn generic_table_counts_and_names() {
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
 
     let mut count = 0;
-    assert_eq!(
-        unsafe {
-            dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Layer as i32, &mut count)
-        },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Layer as i32, &mut count) }, DWG_OK);
     assert!(count >= 1);
-    assert_eq!(
-        unsafe {
-            dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Block as i32, &mut count)
-        },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_table_entry_count(data, acadrust::ffi::DwgTableKind::Block as i32, &mut count) }, DWG_OK);
     assert!(count >= 2, "model + paper space block records");
 
     let mut buf = [0u8; 64];
     let mut needed = 0usize;
-    assert_eq!(
-        unsafe {
-            dwg_table_entry_get_name(
-                data,
-                acadrust::ffi::DwgTableKind::Layer as i32,
-                0,
-                buf.as_mut_ptr() as *mut _,
-                buf.len(),
-                &mut needed,
-            )
-        },
-        DWG_OK
-    );
+    assert_eq!(unsafe {
+        dwg_table_entry_get_name(
+            data,
+            acadrust::ffi::DwgTableKind::Layer as i32,
+            0,
+            buf.as_mut_ptr() as *mut _,
+            buf.len(),
+            &mut needed,
+        )
+    }, DWG_OK);
     assert_eq!(&buf[..needed - 1], b"0");
 
     unsafe { dwg_data_destroy(data) };
@@ -566,8 +537,7 @@ fn generic_table_counts_and_names() {
 
 fn write_batch1_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     use acadrust::entities::{
-        Arc, Circle, Ellipse, Face3D, Line, LwPolyline, LwVertex, MText, Point, Ray, Solid, Spline,
-        XLine,
+        Arc, Circle, Ellipse, Face3D, Line, LwPolyline, LwVertex, MText, Point, Ray, Solid, Spline, XLine,
     };
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
@@ -578,15 +548,8 @@ fn write_batch1_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     let _ = std::fs::remove_file(&path);
 
     let mut doc = CadDocument::new();
-    doc.add_entity(EntityType::Line(Line::from_coords(
-        0.0, 0.0, 0.0, 1.0, 2.0, 3.0,
-    )))
-    .unwrap();
-    doc.add_entity(EntityType::Circle(Circle::from_center_radius(
-        Vector3::new(5.0, 6.0, 0.0),
-        2.5,
-    )))
-    .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 2.0, 3.0))).unwrap();
+    doc.add_entity(EntityType::Circle(Circle::from_center_radius(Vector3::new(5.0, 6.0, 0.0), 2.5))).unwrap();
     doc.add_entity(EntityType::Arc(Arc::from_center_radius_angles(
         Vector3::new(1.0, 2.0, 0.0),
         2.0,
@@ -594,8 +557,7 @@ fn write_batch1_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
         1.0,
     )))
     .unwrap();
-    doc.add_entity(EntityType::Point(Point::from_coords(1.0, 2.0, 3.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Point(Point::from_coords(1.0, 2.0, 3.0))).unwrap();
     let mut e = Ellipse::new();
     e.center = Vector3::new(1.0, 2.0, 0.0);
     e.major_axis = Vector3::new(5.0, 0.0, 0.0);
@@ -667,70 +629,26 @@ fn common_entity_setters_roundtrip_through_getters() {
     let layer = CString::new("P3C_LAYER").unwrap();
     let linetype = CString::new("DASHED").unwrap();
 
-    assert_eq!(
-        unsafe { dwg_entity_set_layer(data, line, layer.as_ptr()) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_color(data, line, 0x00112233) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype(data, line, linetype.as_ptr()) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype_scale(data, line, 2.5) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, layer.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_color(data, line, 0x00112233) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 2.5) }, DWG_OK);
 
     let mut needed = 0;
-    assert_eq!(
-        unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
     let mut layer_buf = vec![0_i8; needed];
-    assert_eq!(
-        unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }
-            .to_str()
-            .unwrap(),
-        "P3C_LAYER"
-    );
+    assert_eq!(unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }.to_str().unwrap(), "P3C_LAYER");
 
-    assert_eq!(
-        unsafe { dwg_entity_get_linetype(line, std::ptr::null_mut(), 0, &mut needed) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_get_linetype(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
     let mut linetype_buf = vec![0_i8; needed];
-    assert_eq!(
-        unsafe {
-            dwg_entity_get_linetype(
-                line,
-                linetype_buf.as_mut_ptr(),
-                linetype_buf.len(),
-                &mut needed,
-            )
-        },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { std::ffi::CStr::from_ptr(linetype_buf.as_ptr()) }
-            .to_str()
-            .unwrap(),
-        "DASHED"
-    );
+    assert_eq!(unsafe { dwg_entity_get_linetype(line, linetype_buf.as_mut_ptr(), linetype_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(linetype_buf.as_ptr()) }.to_str().unwrap(), "DASHED");
 
     let mut color = 0;
     let mut scale = 0.0;
     assert_eq!(unsafe { dwg_entity_get_color(line, &mut color) }, DWG_OK);
-    assert_eq!(
-        unsafe { dwg_entity_get_linetype_scale(line, &mut scale) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_get_linetype_scale(line, &mut scale) }, DWG_OK);
     assert_eq!(color, 0x00112233);
     assert_eq!(scale, 2.5);
 
@@ -747,88 +665,35 @@ fn common_entity_setters_reject_invalid_inputs_without_corruption() {
     let empty_linetype = CString::new("").unwrap();
     assert!(!line.is_null());
 
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype(data, line, empty_linetype.as_ptr()) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_layer(data, line, stable_layer.as_ptr()) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_color(data, line, 0x00010203) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype(data, line, stable_linetype.as_ptr()) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype_scale(data, line, 3.0) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, empty_linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, stable_layer.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_color(data, line, 0x00010203) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, stable_linetype.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 3.0) }, DWG_OK);
 
-    assert_eq!(
-        unsafe { dwg_entity_set_layer(std::ptr::null_mut(), line, stable_layer.as_ptr()) },
-        DWG_EINVAL
-    );
+    assert_eq!(unsafe { dwg_entity_set_layer(std::ptr::null_mut(), line, stable_layer.as_ptr()) }, DWG_EINVAL);
     assert_eq!(dwg_last_error_code(), DWG_EINVAL);
-    assert_eq!(
-        unsafe { dwg_entity_set_color(data, std::ptr::null(), 0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_layer(data, line, std::ptr::null()) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_layer(data, line, empty_linetype.as_ptr()) },
-        DWG_EINVAL
-    );
+    assert_eq!(unsafe { dwg_entity_set_color(data, std::ptr::null(), 0) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, std::ptr::null()) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_layer(data, line, empty_linetype.as_ptr()) }, DWG_EINVAL);
     let invalid_utf8 = [0xff_u8, 0];
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype(data, line, invalid_utf8.as_ptr().cast()) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype_scale(data, line, f64::NAN) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_set_linetype_scale(data, line, 0.0) },
-        DWG_EINVAL
-    );
+    assert_eq!(unsafe { dwg_entity_set_linetype(data, line, invalid_utf8.as_ptr().cast()) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, f64::NAN) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 0.0) }, DWG_EINVAL);
 
     let (foreign_data, foreign_path) = open_sample_document();
     let foreign_line = find_object_of_type(foreign_data, DwgObjectType::Line as i32);
-    assert_eq!(
-        unsafe { dwg_entity_set_color(data, foreign_line, 0x00ABCDEF) },
-        DWG_ENOTFOUND
-    );
+    assert_eq!(unsafe { dwg_entity_set_color(data, foreign_line, 0x00ABCDEF) }, DWG_ENOTFOUND);
 
     let mut needed = 0;
-    assert_eq!(
-        unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_get_layer(line, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
     let mut layer_buf = vec![0_i8; needed];
-    assert_eq!(
-        unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }
-            .to_str()
-            .unwrap(),
-        "P3C_STABLE_LAYER"
-    );
+    assert_eq!(unsafe { dwg_entity_get_layer(line, layer_buf.as_mut_ptr(), layer_buf.len(), &mut needed) }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(layer_buf.as_ptr()) }.to_str().unwrap(), "P3C_STABLE_LAYER");
     let mut color = 0;
     let mut scale = 0.0;
     assert_eq!(unsafe { dwg_entity_get_color(line, &mut color) }, DWG_OK);
-    assert_eq!(
-        unsafe { dwg_entity_get_linetype_scale(line, &mut scale) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_get_linetype_scale(line, &mut scale) }, DWG_OK);
     assert_eq!(color, 0x00010203);
     assert_eq!(scale, 3.0);
 
@@ -838,12 +703,50 @@ fn common_entity_setters_reject_invalid_inputs_without_corruption() {
     let _ = std::fs::remove_file(foreign_path);
 }
 
+unsafe fn read_vec3(
+    getter: unsafe extern "C" fn(*const DwgObject, *mut f64, *mut f64, *mut f64) -> i32,
+    obj: *const DwgObject,
+) -> (f64, f64, f64) {
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    assert_eq!(getter(obj, &mut x, &mut y, &mut z), DWG_OK);
+    (x, y, z)
+}
+
+unsafe fn read_f64(getter: unsafe extern "C" fn(*const DwgObject, *mut f64) -> i32, obj: *const DwgObject) -> f64 {
+    let mut value = 0.0;
+    assert_eq!(getter(obj, &mut value), DWG_OK);
+    value
+}
+
+unsafe fn read_corner(
+    getter: unsafe extern "C" fn(*const DwgObject, i32, *mut f64, *mut f64, *mut f64) -> i32,
+    obj: *const DwgObject,
+    corner: i32,
+) -> (f64, f64, f64) {
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    assert_eq!(getter(obj, corner, &mut x, &mut y, &mut z), DWG_OK);
+    (x, y, z)
+}
+
+fn assert_last_error(code: i32) {
+    assert_eq!(dwg_last_error_code(), code);
+    let mut needed = 0;
+    assert_eq!(dwg_last_error(std::ptr::null_mut(), 0, &mut needed), DWG_OK);
+    assert!(needed > 1);
+    let mut buffer = vec![0_i8; needed];
+    assert_eq!(dwg_last_error(buffer.as_mut_ptr(), buffer.len(), &mut needed), code);
+}
+
 #[test]
 fn phase3c_basic_geometry_setters_roundtrip_through_getters() {
     let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3c1");
     let mut data: *mut DwgData = std::ptr::null_mut();
-    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+    assert_eq!(dwg_data_create(&mut data), DWG_OK);
+    assert_eq!(dwg_read_file(path.as_ptr(), data), DWG_OK);
 
     let p1 = (11.0, 12.0, 13.0);
     let p2 = (21.0, 22.0, 23.0);
@@ -860,266 +763,139 @@ fn phase3c_basic_geometry_setters_roundtrip_through_getters() {
     let xline = find_object_of_type(data, DwgObjectType::XLine as i32);
     let solid = find_object_of_type(data, DwgObjectType::Solid as i32);
     let face3d = find_object_of_type(data, DwgObjectType::Face3D as i32);
-    for obj in [line, circle, arc, point, ellipse, ray, xline, solid, face3d] {
-        assert!(!obj.is_null());
+
+    assert_eq!(unsafe { dwg_entity_line_set_start(data, line, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_line_set_end(data, line, p2.0, p2.1, p2.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_circle_set_center(data, circle, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_circle_set_radius(data, circle, radius) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_arc_set_center(data, arc, p2.0, p2.1, p2.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_arc_set_radius(data, arc, radius) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_arc_set_start_angle(data, arc, start_angle) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_arc_set_end_angle(data, arc, end_angle) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_point_set_location(data, point, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_center(data, ellipse, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_major_axis(data, ellipse, p2.0, p2.1, p2.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, ratio) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ray_set_base_point(data, ray, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ray_set_direction(data, ray, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_xline_set_base_point(data, xline, p2.0, p2.1, p2.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_xline_set_direction(data, xline, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_solid_set_corner(data, solid, 1, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_solid_set_corner(data, solid, 4, p2.0, p2.1, p2.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_face3d_set_corner(data, face3d, 1, p1.0, p1.1, p1.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_face3d_set_corner(data, face3d, 4, p2.0, p2.1, p2.2) }, DWG_OK);
+
+    assert_eq!(unsafe { read_vec3(dwg_entity_line_get_start, line) }, p1);
+    assert_eq!(unsafe { read_vec3(dwg_entity_line_get_end, line) }, p2);
+    assert_eq!(unsafe { read_vec3(dwg_entity_circle_get_center, circle) }, p1);
+    assert_eq!(unsafe { read_f64(dwg_entity_circle_get_radius, circle) }, radius);
+    assert_eq!(unsafe { read_vec3(dwg_entity_arc_get_center, arc) }, p2);
+    assert_eq!(unsafe { read_f64(dwg_entity_arc_get_radius, arc) }, radius);
+    assert_eq!(unsafe { read_f64(dwg_entity_arc_get_start_angle, arc) }, start_angle);
+    assert_eq!(unsafe { read_f64(dwg_entity_arc_get_end_angle, arc) }, end_angle);
+    assert_eq!(unsafe { read_vec3(dwg_entity_point_get_location, point) }, p1);
+    assert_eq!(unsafe { read_vec3(dwg_entity_ellipse_get_center, ellipse) }, p1);
+    assert_eq!(unsafe { read_vec3(dwg_entity_ellipse_get_major_axis, ellipse) }, p2);
+    assert_eq!(unsafe { read_f64(dwg_entity_ellipse_get_minor_axis_ratio, ellipse) }, ratio);
+    assert_eq!(unsafe { read_vec3(dwg_entity_ray_get_base_point, ray) }, p1);
+    assert_eq!(unsafe { read_vec3(dwg_entity_xline_get_base_point, xline) }, p2);
+    for direction in [
+        unsafe { read_vec3(dwg_entity_ray_get_direction, ray) },
+        unsafe { read_vec3(dwg_entity_xline_get_direction, xline) },
+    ] {
+        assert!((direction.0 - 11.0 / 434.0_f64.sqrt()).abs() < 1e-12);
+        assert!((direction.1 - 12.0 / 434.0_f64.sqrt()).abs() < 1e-12);
+        assert!((direction.2 - 13.0 / 434.0_f64.sqrt()).abs() < 1e-12);
     }
-
-    assert_eq!(
-        unsafe { dwg_entity_line_set_start(data, line, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_line_set_end(data, line, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_circle_set_center(data, circle, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_circle_set_radius(data, circle, radius) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_arc_set_center(data, arc, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_arc_set_radius(data, arc, radius) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_arc_set_start_angle(data, arc, start_angle) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_arc_set_end_angle(data, arc, end_angle) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_point_set_location(data, point, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_center(data, ellipse, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_major_axis(data, ellipse, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, ratio) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ray_set_base_point(data, ray, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ray_set_direction(data, ray, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_xline_set_base_point(data, xline, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_xline_set_direction(data, xline, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_solid_set_corner(data, solid, 1, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_solid_set_corner(data, solid, 4, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_face3d_set_corner(data, face3d, 1, p1.0, p1.1, p1.2) },
-        DWG_OK
-    );
-    assert_eq!(
-        unsafe { dwg_entity_face3d_set_corner(data, face3d, 4, p2.0, p2.1, p2.2) },
-        DWG_OK
-    );
-
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut z = 0.0;
-    let mut value = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_line_get_start(line, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_line_get_end(line, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
-    assert_eq!(
-        unsafe { dwg_entity_circle_get_center(circle, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_circle_get_radius(circle, &mut value) },
-        DWG_OK
-    );
-    assert_eq!(value, radius);
-    assert_eq!(
-        unsafe { dwg_entity_arc_get_center(arc, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
-    assert_eq!(
-        unsafe { dwg_entity_arc_get_radius(arc, &mut value) },
-        DWG_OK
-    );
-    assert_eq!(value, radius);
-    assert_eq!(
-        unsafe { dwg_entity_arc_get_start_angle(arc, &mut value) },
-        DWG_OK
-    );
-    assert_eq!(value, start_angle);
-    assert_eq!(
-        unsafe { dwg_entity_arc_get_end_angle(arc, &mut value) },
-        DWG_OK
-    );
-    assert_eq!(value, end_angle);
-    assert_eq!(
-        unsafe { dwg_entity_point_get_location(point, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_get_center(ellipse, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_get_major_axis(ellipse, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_get_minor_axis_ratio(ellipse, &mut value) },
-        DWG_OK
-    );
-    assert_eq!(value, ratio);
-    assert_eq!(
-        unsafe { dwg_entity_ray_get_base_point(ray, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_ray_get_direction(ray, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert!((x - 11.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert!((y - 12.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert!((z - 13.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert_eq!(
-        unsafe { dwg_entity_xline_get_base_point(xline, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
-    assert_eq!(
-        unsafe { dwg_entity_xline_get_direction(xline, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert!((x - 11.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert!((y - 12.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert!((z - 13.0 / 434.0_f64.sqrt()).abs() < 1e-12);
-    assert_eq!(
-        unsafe { dwg_entity_solid_get_corner(solid, 1, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_solid_get_corner(solid, 4, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
-    assert_eq!(
-        unsafe { dwg_entity_face3d_get_corner(face3d, 1, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p1);
-    assert_eq!(
-        unsafe { dwg_entity_face3d_get_corner(face3d, 4, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
-    assert_eq!((x, y, z), p2);
+    assert_eq!(unsafe { read_corner(dwg_entity_solid_get_corner, solid, 1) }, p1);
+    assert_eq!(unsafe { read_corner(dwg_entity_solid_get_corner, solid, 4) }, p2);
+    assert_eq!(unsafe { read_corner(dwg_entity_face3d_get_corner, face3d, 1) }, p1);
+    assert_eq!(unsafe { read_corner(dwg_entity_face3d_get_corner, face3d, 4) }, p2);
 
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(path_buf);
 }
 
 #[test]
-fn phase3c_basic_geometry_setters_reject_invalid_inputs() {
+fn phase3c_direction_setters_normalize_extreme_finite_vectors() {
+    let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3c1_extreme");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(dwg_data_create(&mut data), DWG_OK);
+    assert_eq!(dwg_read_file(path.as_ptr(), data), DWG_OK);
+    let ray = find_object_of_type(data, DwgObjectType::Ray as i32);
+    let xline = find_object_of_type(data, DwgObjectType::XLine as i32);
+
+    assert_eq!(unsafe { dwg_entity_ray_set_direction(data, ray, f64::MAX, f64::MAX / 2.0, -f64::MAX / 4.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_xline_set_direction(data, xline, f64::MIN_POSITIVE, f64::MIN_POSITIVE / 2.0, -f64::MIN_POSITIVE / 4.0) }, DWG_OK);
+    for direction in [
+        unsafe { read_vec3(dwg_entity_ray_get_direction, ray) },
+        unsafe { read_vec3(dwg_entity_xline_get_direction, xline) },
+    ] {
+        assert!(direction.0.is_finite() && direction.1.is_finite() && direction.2.is_finite());
+        assert!((direction.0 * direction.0 + direction.1 * direction.1 + direction.2 * direction.2 - 1.0).abs() < 1e-12);
+    }
+
+    unsafe { dwg_data_destroy(data) };
+    let _ = std::fs::remove_file(path_buf);
+}
+
+#[test]
+fn phase3c_geometry_setters_reject_invalid_inputs_without_mutation() {
     let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3c1_invalid");
     let mut data: *mut DwgData = std::ptr::null_mut();
-    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
-
+    assert_eq!(dwg_data_create(&mut data), DWG_OK);
+    assert_eq!(dwg_read_file(path.as_ptr(), data), DWG_OK);
+    let line = find_object_of_type(data, DwgObjectType::Line as i32);
     let circle = find_object_of_type(data, DwgObjectType::Circle as i32);
+    let arc = find_object_of_type(data, DwgObjectType::Arc as i32);
     let ellipse = find_object_of_type(data, DwgObjectType::Ellipse as i32);
     let ray = find_object_of_type(data, DwgObjectType::Ray as i32);
     let xline = find_object_of_type(data, DwgObjectType::XLine as i32);
     let solid = find_object_of_type(data, DwgObjectType::Solid as i32);
     let face3d = find_object_of_type(data, DwgObjectType::Face3D as i32);
+    let stable = (11.0, 12.0, 13.0);
 
-    assert_eq!(
-        unsafe { dwg_entity_circle_set_radius(data, circle, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_circle_set_radius(data, circle, f64::NAN) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, f64::NAN) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, 1.1) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ray_set_direction(data, ray, 0.0, 0.0, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_ray_set_direction(data, ray, f64::INFINITY, 0.0, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_xline_set_direction(data, xline, 0.0, 0.0, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_xline_set_direction(data, xline, f64::NAN, 0.0, 0.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_solid_set_corner(data, solid, 0, 1.0, 2.0, 3.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_face3d_set_corner(data, face3d, 5, 1.0, 2.0, 3.0) },
-        DWG_EINVAL
-    );
-    assert_eq!(
-        unsafe { dwg_entity_line_set_start(data, circle, 1.0, 2.0, 3.0) },
-        DWG_ETYPE
-    );
+    assert_eq!(unsafe { dwg_entity_line_set_start(data, line, stable.0, stable.1, stable.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_circle_set_center(data, circle, stable.0, stable.1, stable.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_circle_set_radius(data, circle, 4.5) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_arc_set_start_angle(data, arc, 0.25) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, 0.625) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_ray_set_direction(data, ray, 3.0, 4.0, 0.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_xline_set_direction(data, xline, 3.0, 4.0, 0.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_solid_set_corner(data, solid, 1, stable.0, stable.1, stable.2) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_face3d_set_corner(data, face3d, 1, stable.0, stable.1, stable.2) }, DWG_OK);
+
+    assert_eq!(unsafe { dwg_entity_line_set_start(data, line, f64::NAN, 0.0, 0.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_line_get_start, line) }, stable);
+    assert_eq!(unsafe { dwg_entity_arc_set_start_angle(data, arc, f64::INFINITY) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_arc_get_start_angle, arc) }, 0.25);
+    assert_eq!(unsafe { dwg_entity_circle_set_radius(data, circle, 0.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_circle_set_radius(data, circle, f64::NAN) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_circle_get_radius, circle) }, 4.5);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, 0.0) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, 1.1) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_ellipse_set_minor_axis_ratio(data, ellipse, f64::NAN) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_ellipse_get_minor_axis_ratio, ellipse) }, 0.625);
+    assert_eq!(unsafe { dwg_entity_ray_set_direction(data, ray, 0.0, 0.0, 0.0) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_xline_set_direction(data, xline, f64::NAN, 0.0, 0.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_ray_get_direction, ray) }, (0.6, 0.8, 0.0));
+    assert_eq!(unsafe { read_vec3(dwg_entity_xline_get_direction, xline) }, (0.6, 0.8, 0.0));
+    assert_eq!(unsafe { dwg_entity_solid_set_corner(data, solid, 0, 1.0, 2.0, 3.0) }, DWG_EINVAL);
+    assert_eq!(unsafe { dwg_entity_face3d_set_corner(data, face3d, 5, 1.0, 2.0, 3.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_corner(dwg_entity_solid_get_corner, solid, 1) }, stable);
+    assert_eq!(unsafe { read_corner(dwg_entity_face3d_get_corner, face3d, 1) }, stable);
+    assert_eq!(unsafe { dwg_entity_line_set_start(data, circle, 1.0, 2.0, 3.0) }, DWG_ETYPE);
+    assert_last_error(DWG_ETYPE);
+    assert_eq!(unsafe { read_vec3(dwg_entity_circle_get_center, circle) }, stable);
+    assert_eq!(unsafe { dwg_entity_line_set_start(data, line, 21.0, 22.0, 23.0) }, DWG_OK);
+    assert_eq!(dwg_last_error_code(), DWG_OK);
 
     unsafe { dwg_data_destroy(data) };
     let _ = std::fs::remove_file(path_buf);
@@ -1137,25 +913,16 @@ fn batch1_geometry_getters() {
     let mut cx = 0.0;
     let mut cy = 0.0;
     let mut cz = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_get_center(ell, &mut cx, &mut cy, &mut cz) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_ellipse_get_center(ell, &mut cx, &mut cy, &mut cz) }, DWG_OK);
     assert!((cx - 1.0).abs() < 1e-9 && (cy - 2.0).abs() < 1e-9);
     let mut ratio = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_ellipse_get_minor_axis_ratio(ell, &mut ratio) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_ellipse_get_minor_axis_ratio(ell, &mut ratio) }, DWG_OK);
     assert!((ratio - 0.5).abs() < 1e-9);
 
     let mtx = find_object_of_type(data, acadrust::ffi::DwgObjectType::MText as i32);
     assert!(!mtx.is_null());
     let mut needed = 0usize;
-    assert_eq!(
-        unsafe { dwg_entity_mtext_get_value(mtx, std::ptr::null_mut(), 0, &mut needed) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_mtext_get_value(mtx, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
     assert_eq!(needed, 3);
     let mut h = 0.0;
     assert_eq!(unsafe { dwg_entity_mtext_get_height(mtx, &mut h) }, DWG_OK);
@@ -1164,32 +931,20 @@ fn batch1_geometry_getters() {
     let sp = find_object_of_type(data, acadrust::ffi::DwgObjectType::Spline as i32);
     assert!(!sp.is_null());
     let mut degree = 0;
-    assert_eq!(
-        unsafe { dwg_entity_spline_get_degree(sp, &mut degree) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_spline_get_degree(sp, &mut degree) }, DWG_OK);
     assert_eq!(degree, 3);
     let mut count = 0;
-    assert_eq!(
-        unsafe { dwg_entity_spline_get_control_point_count(sp, &mut count) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_spline_get_control_point_count(sp, &mut count) }, DWG_OK);
     assert!(count >= 3);
 
     let lw = find_object_of_type(data, acadrust::ffi::DwgObjectType::LwPolyline as i32);
     assert!(!lw.is_null());
     let mut vcount = 0;
-    assert_eq!(
-        unsafe { dwg_entity_lwpolyline_get_vertex_count(lw, &mut vcount) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_lwpolyline_get_vertex_count(lw, &mut vcount) }, DWG_OK);
     assert_eq!(vcount, 2);
     let mut vx = 0.0;
     let mut vy = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_lwpolyline_get_vertex(lw, 1, &mut vx, &mut vy) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_lwpolyline_get_vertex(lw, 1, &mut vx, &mut vy) }, DWG_OK);
     assert!((vx - 10.0).abs() < 1e-9 && (vy - 5.0).abs() < 1e-9);
 
     // Common getters on the line-family sample from the first document.
@@ -1239,20 +994,10 @@ fn batch2_block_mesh_getters() {
     let ins = find_object_of_type(data, acadrust::ffi::DwgObjectType::Insert as i32);
     assert!(!ins.is_null());
     let mut needed = 0usize;
-    assert_eq!(
-        unsafe { dwg_entity_insert_get_block_name(ins, std::ptr::null_mut(), 0, &mut needed) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_insert_get_block_name(ins, std::ptr::null_mut(), 0, &mut needed) }, DWG_OK);
     let mut name_buf = [0u8; 64];
     assert_eq!(
-        unsafe {
-            dwg_entity_insert_get_block_name(
-                ins,
-                name_buf.as_mut_ptr() as *mut _,
-                name_buf.len(),
-                &mut needed,
-            )
-        },
+        unsafe { dwg_entity_insert_get_block_name(ins, name_buf.as_mut_ptr() as *mut _, name_buf.len(), &mut needed) },
         DWG_OK
     );
     eprintln!("block_name bytes: {:?}", &name_buf[..needed - 1]);
@@ -1260,33 +1005,21 @@ fn batch2_block_mesh_getters() {
     let mut x = 0.0;
     let mut y = 0.0;
     let mut z = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_insert_get_insert_point(ins, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_insert_get_insert_point(ins, &mut x, &mut y, &mut z) }, DWG_OK);
     assert!((x - 1.0).abs() < 1e-9 && (y - 2.0).abs() < 1e-9 && (z - 3.0).abs() < 1e-9);
 
     let p2 = find_object_of_type(data, acadrust::ffi::DwgObjectType::Polyline2D as i32);
     assert!(!p2.is_null());
     let mut vcount = 0;
-    assert_eq!(
-        unsafe { dwg_entity_polyline2d_get_vertex_count(p2, &mut vcount) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_polyline2d_get_vertex_count(p2, &mut vcount) }, DWG_OK);
     assert_eq!(vcount, 2);
-    assert_eq!(
-        unsafe { dwg_entity_polyline2d_get_vertex(p2, 1, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_polyline2d_get_vertex(p2, 1, &mut x, &mut y, &mut z) }, DWG_OK);
     assert!((x - 5.0).abs() < 1e-9 && (y - 6.0).abs() < 1e-9);
 
     let mesh = find_object_of_type(data, acadrust::ffi::DwgObjectType::Mesh as i32);
     assert!(!mesh.is_null());
     let mut mcount = 0;
-    assert_eq!(
-        unsafe { dwg_entity_mesh_get_vertex_count(mesh, &mut mcount) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_mesh_get_vertex_count(mesh, &mut mcount) }, DWG_OK);
     assert_eq!(mcount, 3);
 
     let vp = find_object_of_type(data, acadrust::ffi::DwgObjectType::Viewport as i32);
@@ -1294,10 +1027,7 @@ fn batch2_block_mesh_getters() {
     let mut w = 0.0;
     let mut h = 0.0;
     assert_eq!(unsafe { dwg_entity_viewport_get_width(vp, &mut w) }, DWG_OK);
-    assert_eq!(
-        unsafe { dwg_entity_viewport_get_height(vp, &mut h) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_viewport_get_height(vp, &mut h) }, DWG_OK);
     assert!(w > 0.0 && h > 0.0);
 
     unsafe { dwg_data_destroy(data) };
@@ -1305,9 +1035,7 @@ fn batch2_block_mesh_getters() {
 }
 
 fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
-    use acadrust::entities::{
-        AttributeDefinition, Hatch, HatchPattern, Helix, Leader, Shape, Tolerance,
-    };
+    use acadrust::entities::{AttributeDefinition, Hatch, HatchPattern, Helix, Leader, Shape, Tolerance};
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
 
@@ -1329,7 +1057,10 @@ fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     doc.add_entity(EntityType::Tolerance(tol)).unwrap();
 
     let mut l = Leader::new();
-    l.vertices = vec![Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0)];
+    l.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 10.0, 0.0),
+    ];
     doc.add_entity(EntityType::Leader(l)).unwrap();
 
     let mut a = AttributeDefinition::new("TAG1".to_string(), "Enter".to_string(), "D".to_string());
@@ -1365,9 +1096,7 @@ fn batch3_annotation_text_getters() {
     let h = find_object_of_type(data, acadrust::ffi::DwgObjectType::Hatch as i32);
     assert!(!h.is_null());
     assert_eq!(
-        unsafe {
-            dwg_entity_hatch_get_pattern_name(h, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed)
-        },
+        unsafe { dwg_entity_hatch_get_pattern_name(h, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
         DWG_OK
     );
     assert_eq!(&buf[..needed - 1], b"SOLID");
@@ -1375,9 +1104,7 @@ fn batch3_annotation_text_getters() {
     let tol = find_object_of_type(data, acadrust::ffi::DwgObjectType::Tolerance as i32);
     assert!(!tol.is_null());
     assert_eq!(
-        unsafe {
-            dwg_entity_tolerance_get_text(tol, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed)
-        },
+        unsafe { dwg_entity_tolerance_get_text(tol, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
         DWG_OK
     );
     assert_eq!(&buf[..needed - 1], b"TOL");
@@ -1385,29 +1112,18 @@ fn batch3_annotation_text_getters() {
     let ldr = find_object_of_type(data, acadrust::ffi::DwgObjectType::Leader as i32);
     assert!(!ldr.is_null());
     let mut vcount = 0;
-    assert_eq!(
-        unsafe { dwg_entity_leader_get_vertex_count(ldr, &mut vcount) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_leader_get_vertex_count(ldr, &mut vcount) }, DWG_OK);
     assert_eq!(vcount, 2);
     let mut x = 0.0;
     let mut y = 0.0;
     let mut z = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_leader_get_vertex(ldr, 1, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_leader_get_vertex(ldr, 1, &mut x, &mut y, &mut z) }, DWG_OK);
     assert!((x - 10.0).abs() < 1e-9 && (y - 10.0).abs() < 1e-9);
 
-    let att = find_object_of_type(
-        data,
-        acadrust::ffi::DwgObjectType::AttributeDefinition as i32,
-    );
+    let att = find_object_of_type(data, acadrust::ffi::DwgObjectType::AttributeDefinition as i32);
     assert!(!att.is_null());
     assert_eq!(
-        unsafe {
-            dwg_entity_attrdef_get_tag(att, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed)
-        },
+        unsafe { dwg_entity_attrdef_get_tag(att, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
         DWG_OK
     );
     assert_eq!(&buf[..needed - 1], b"TAG1");
@@ -1421,16 +1137,10 @@ fn batch3_annotation_text_getters() {
     let hx = find_object_of_type(data, acadrust::ffi::DwgObjectType::Helix as i32);
     assert!(!hx.is_null());
     let mut radius = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_helix_get_radius(hx, &mut radius) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_helix_get_radius(hx, &mut radius) }, DWG_OK);
     assert!((radius - 3.0).abs() < 1e-9);
     let mut turns = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_helix_get_turns(hx, &mut turns) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_helix_get_turns(hx, &mut turns) }, DWG_OK);
     assert!((turns - 4.0).abs() < 1e-9);
 
     unsafe { dwg_data_destroy(data) };
@@ -1449,8 +1159,7 @@ fn write_batch4_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
 
     let mut doc = CadDocument::new();
     let dim = DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(dim)))
-        .unwrap();
+    doc.add_entity(EntityType::Dimension(Dimension::Linear(dim))).unwrap();
 
     let mut img = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 640.0, 480.0);
     doc.add_entity(EntityType::RasterImage(img)).unwrap();
@@ -1469,48 +1178,29 @@ fn batch4_dimension_image_getters() {
     let dim = find_object_of_type(data, acadrust::ffi::DwgObjectType::Dimension as i32);
     assert!(!dim.is_null());
     let mut subtype = 0;
-    assert_eq!(
-        unsafe { dwg_entity_dimension_get_subtype(dim, &mut subtype) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_dimension_get_subtype(dim, &mut subtype) }, DWG_OK);
     assert_eq!(subtype, 2); // Linear
     let mut x = 0.0;
     let mut y = 0.0;
     let mut z = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_dimension_get_definition_point(dim, &mut x, &mut y, &mut z) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_dimension_get_definition_point(dim, &mut x, &mut y, &mut z) }, DWG_OK);
     assert!((x - 0.0).abs() < 1e-9 && (y - 0.0).abs() < 1e-9);
     let mut needed = 0usize;
     let mut buf = [0u8; 64];
     assert_eq!(
-        unsafe {
-            dwg_entity_dimension_get_style_name(
-                dim,
-                buf.as_mut_ptr() as *mut _,
-                buf.len(),
-                &mut needed,
-            )
-        },
+        unsafe { dwg_entity_dimension_get_style_name(dim, buf.as_mut_ptr() as *mut _, buf.len(), &mut needed) },
         DWG_OK
     );
     assert_eq!(&buf[..needed - 1], b"Standard");
     let mut m = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_dimension_get_measurement(dim, &mut m) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_dimension_get_measurement(dim, &mut m) }, DWG_OK);
     assert!(m > 0.0);
 
     let img = find_object_of_type(data, acadrust::ffi::DwgObjectType::RasterImage as i32);
     assert!(!img.is_null());
     let mut w = 0.0;
     let mut h = 0.0;
-    assert_eq!(
-        unsafe { dwg_entity_raster_image_get_size(img, &mut w, &mut h) },
-        DWG_OK
-    );
+    assert_eq!(unsafe { dwg_entity_raster_image_get_size(img, &mut w, &mut h) }, DWG_OK);
     assert!((w - 640.0).abs() < 1e-9 && (h - 480.0).abs() < 1e-9);
 
     unsafe { dwg_data_destroy(data) };
