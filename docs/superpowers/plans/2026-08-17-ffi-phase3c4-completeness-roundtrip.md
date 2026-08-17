@@ -4,7 +4,7 @@
 
 **Goal:** 用自动化接口盘点、错误矩阵、DWG/DXF round-trip 和全量质量门禁证明 P3c setter 覆盖完整且可持久化。
 
-**Architecture:** 先从 `entity.rs`/`entity_set.rs` 的导出符号建立 getter-setter 配对测试，再通过真实 FFI 入口执行 read → mutate → write → read。版本矩阵只选各版本均支持的基础实体；高级实体使用现有支持版本的专用 fixture。最终验证不引入头文件生成或 P4 API。
+**Architecture:** 先用显式 ABI 清单生成 C 翻译单元并真实编译、链接全部 getter/setter 导出，再通过 FFI 入口执行 read → mutate → write → read。版本矩阵只选各版本均支持的基础实体；高级实体使用现有支持版本的专用 fixture。最终验证不引入头文件生成或 P4 API。
 
 **Tech Stack:** Rust integration tests、C ABI、DWG/DXF codecs、Cargo fmt/clippy/test。
 
@@ -18,36 +18,24 @@
 
 ## File Structure
 
-- Create: `tests/ffi_setter_inventory.rs` — 导出符号配对与只读白名单测试。
+- Create: `tests/ffi_setter_inventory.rs` — ABI 清单配对与 C 链接测试。
 - Modify: `tests/abi_test.rs` — 错误矩阵与 DWG/DXF round-trip。
 - Modify: `docs/superpowers/specs/2026-08-17-ffi-phase3c-entity-setters-design.md` — 仅在实现暴露规范偏差时同步最终接口表；无偏差则不修改。
 
 ---
 
-### Task 1: Getter/Setter 自动配对盘点
+### Task 1: Getter/Setter ABI 清单与链接盘点
 
 **Files:**
 - Create: `tests/ffi_setter_inventory.rs`
 
 **Interfaces:**
-- Consumes: `include_str!("../src/ffi/entity.rs")`、`include_str!("../src/ffi/entity_set.rs")`。
-- Produces: 73 个可写 getter 的一一配对门禁。
+- Consumes: 84 项 getter ABI 清单、74 项 setter ABI 清单、GNU C linker。
+- Produces: 73 个原有可写 getter 的一一配对门禁，以及新增 Mesh face setter 的导出验证。
 
-- [ ] **Step 1: 写盘点测试并确认失败**
+- [ ] **Step 1: 写显式 ABI 清单及配对测试**
 
-创建以下符号提取 helper：
-
-```rust
-fn exported_names(source: &str, prefix: &str) -> BTreeSet<String> {
-    source
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|token| token.starts_with(prefix))
-        .map(str::to_owned)
-        .collect()
-}
-```
-
-测试 `every_writable_entity_getter_has_a_setter` 收集 `dwg_entity_` 且包含 `_get_` 的 getter。先从集合中移除 Phase 3c3 新增的 `dwg_entity_mesh_get_face_vertex` 并断言它确实存在，使“原有 getter 数为 84”的门禁不受新增 API 影响。只读集合固定为：
+在 `tests/ffi_setter_inventory.rs` 定义固定长度清单 `const GETTERS: [&str; 84]`、`const SETTERS: [&str; 74]`。GETTERS 逐项列出 P3c 前已有的 84 个 `dwg_entity_*_get_*`；SETTERS 列出其 73 个可写配对以及新增的 `dwg_entity_mesh_set_face_vertex`。只读集合固定为：
 
 ```rust
 const READ_ONLY: &[&str] = &[
@@ -65,17 +53,17 @@ const READ_ONLY: &[&str] = &[
 ];
 ```
 
-断言移除新增 getter 后的原有 getter 数为 84、白名单数为 11；排除白名单后，将每个名字的 `_get_` 替换为 `_set_` 并断言存在。Phase 3c3 新增的 `mesh_get_face_vertex` 单独断言有 `mesh_set_face_vertex`，不计入原有 84。
+测试 `abi_manifest_pairs_every_writable_getter` 排除上述 11 项后，将每个 getter 名字的 `_get_` 替换为 `_set_` 并断言 SETTERS 包含结果；另断言 SETTERS 包含 `dwg_entity_mesh_set_face_vertex`。固定长度数组在编译期锁定 84/74，白名单固定长度为 11。
 
 Run: `cargo test --release --features ffi --test ffi_setter_inventory`
 
-Expected: 若前三阶段尚有任何缺口，测试列出缺失 setter；补齐后通过。
+Expected: 若清单缺失配对则测试列出 getter/setter 名；补齐后通过。
 
-- [ ] **Step 2: 增加反向命名检查**
+- [ ] **Step 2: 编译并链接全部 ABI 清单符号**
 
-对所有包含 `_set_` 的 entity setter，断言其参数入口位于 `entity_set.rs`，并检查不存在 `dimension_set_subtype`、`dimension_set_measurement`、`*_set_*_count`。append/remove/clear 不参与一一配对，但必须至少各存在于 Spline、Polyline 系列、Leader、Mesh 对应接口族中。
+测试 `abi_manifest_symbols_export_from_cdylib` 从 GETTERS、SETTERS 以及新增 `dwg_entity_mesh_get_face_vertex` 生成临时 C 文件。每个符号使用 `extern void symbol(void);` 声明并将地址放入函数指针数组；程序不调用这些占位原型，只返回数组首项是否为 NULL。复用现有 GNU DLL 定位和链接参数编译、链接并运行，要求链接器解析 84 个原 getter、1 个新增 getter和 74 个 setter。真实链接结果是权威证据，源码注释或测试字符串不能伪造导出。
 
-同一测试从 73 个派生 setter 名称加上 `dwg_entity_mesh_set_face_vertex` 生成临时 C 文件，每个符号使用 `extern void symbol(void);` 声明并将地址放入函数指针数组。复用 GNU DLL 定位和链接参数编译该文件；不调用这些错误原型，只要求链接器解析全部 74 个导出名。这样源文件中的注释或测试字符串不能伪造“已导出”结果。
+另在 Rust 配对测试中断言清单不存在 `dimension_set_subtype`、`dimension_set_measurement` 或任何 `set_*_count`；append/remove/clear 不参与一一配对，由各阶段的 C smoke 覆盖。
 
 - [ ] **Step 3: 运行并提交**
 
