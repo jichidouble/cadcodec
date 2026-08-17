@@ -12,6 +12,7 @@ pub mod io;
 pub mod object;
 pub mod iterate;
 pub mod entity;
+pub mod entity_set;
 pub mod table;
 pub mod util;
 
@@ -23,4 +24,6 @@ pub use io::*;
 pub use object::*;
 pub use iterate::*;
 pub use entity::*;
+#[allow(unused_imports)]
+pub use entity_set::*;
 pub use table::*;

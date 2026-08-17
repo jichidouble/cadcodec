@@ -57,3 +57,53 @@ pub(crate) fn copy_c_string(text: &str, buf: *mut i8, cap: usize, needed: *mut u
     }
     DWG_OK
 }
+
+#[allow(dead_code)]
+pub(crate) unsafe fn read_c_string(value: *const i8) -> Result<String, i32> {
+    if value.is_null() {
+        return Err(DWG_EINVAL);
+    }
+    std::ffi::CStr::from_ptr(value)
+        .to_str()
+        .map(str::to_owned)
+        .map_err(|_| DWG_EINVAL)
+}
+
+#[allow(dead_code)]
+pub(crate) fn finite(value: f64) -> bool {
+    value.is_finite()
+}
+
+#[allow(dead_code)]
+pub(crate) fn finite2(x: f64, y: f64) -> bool {
+    x.is_finite() && y.is_finite()
+}
+
+#[allow(dead_code)]
+pub(crate) fn finite3(x: f64, y: f64, z: f64) -> bool {
+    x.is_finite() && y.is_finite() && z.is_finite()
+}
+
+#[allow(dead_code)]
+pub(crate) fn nonzero3(x: f64, y: f64, z: f64) -> bool {
+    finite3(x, y, z) && (x != 0.0 || y != 0.0 || z != 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setter_input_helpers_reject_invalid_values() {
+        assert!(!finite(f64::NAN));
+        assert!(!finite(f64::INFINITY));
+        assert!(finite3(1.0, 2.0, 3.0));
+        assert!(!nonzero3(0.0, 0.0, 0.0));
+        assert_eq!(unsafe { read_c_string(std::ptr::null()) }, Err(DWG_EINVAL));
+        let invalid = [0xff_u8, 0];
+        assert_eq!(
+            unsafe { read_c_string(invalid.as_ptr() as *const i8) },
+            Err(DWG_EINVAL)
+        );
+    }
+}
