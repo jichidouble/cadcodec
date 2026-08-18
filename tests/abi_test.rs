@@ -1490,15 +1490,17 @@ fn batch2_block_mesh_getters() {
     let _ = std::fs::remove_file(&path_buf);
 }
 
-fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
-    use acadrust::entities::{AttributeDefinition, Hatch, HatchPattern, Helix, Leader, Shape, Tolerance};
+fn write_batch3_dwg(dir_name: &str) -> SampleDwgFixture {
+    use acadrust::entities::{
+        AttributeDefinition, Hatch, HatchPattern, Helix, Leader, MLine, Shape, Tolerance,
+    };
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
 
-    let dir = std::env::temp_dir().join(dir_name);
+    let suffix = SAMPLE_DWG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("{dir_name}_{}_{}", std::process::id(), suffix));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("batch3.dwg");
-    let _ = std::fs::remove_file(&path);
 
     let mut doc = CadDocument::new();
 
@@ -1529,6 +1531,13 @@ fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     s.rotation = 0.5;
     doc.add_entity(EntityType::Shape(s)).unwrap();
 
+    let mut ml = MLine::from_points(&[
+        Vector3::new(7.0, 8.0, 0.0),
+        Vector3::new(9.0, 10.0, 0.0),
+    ]);
+    ml.style_name = "Standard".to_string();
+    doc.add_entity(EntityType::MLine(ml)).unwrap();
+
     let mut hx = Helix::new();
     hx.axis_base_point = Vector3::new(0.0, 0.0, 0.0);
     hx.radius = 3.0;
@@ -1536,15 +1545,19 @@ fn write_batch3_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     doc.add_entity(EntityType::Helix(hx)).unwrap();
 
     DwgWriter::write_to_file(&path, &doc).unwrap();
-    (CString::new(path.to_str().unwrap()).unwrap(), path)
+    SampleDwgFixture {
+        c_path: CString::new(path.to_str().unwrap()).unwrap(),
+        path,
+        dir,
+    }
 }
 
 #[test]
 fn batch3_annotation_text_getters() {
-    let (path, path_buf) = write_batch3_dwg("acadrust_ffi_p3b3");
+    let fixture = write_batch3_dwg("acadrust_ffi_p3b3");
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
 
     let mut needed = 0usize;
     let mut buf = [0u8; 64];
@@ -1600,7 +1613,122 @@ fn batch3_annotation_text_getters() {
     assert!((turns - 4.0).abs() < 1e-9);
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(&path_buf);
+}
+
+#[test]
+fn phase3c_annotation_setters() {
+    let fixture = write_batch3_dwg("acadrust_ffi_p3c2_annotation");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
+
+    let attrdef = find_object_of_type(data, DwgObjectType::AttributeDefinition as i32);
+    let tolerance = find_object_of_type(data, DwgObjectType::Tolerance as i32);
+    let mline = find_object_of_type(data, DwgObjectType::MLine as i32);
+    let shape = find_object_of_type(data, DwgObjectType::Shape as i32);
+    assert!(!attrdef.is_null() && !tolerance.is_null() && !mline.is_null() && !shape.is_null());
+
+    let tag = CString::new("P3C_TAG").unwrap();
+    let prompt = CString::new("P3C_PROMPT").unwrap();
+    let default_value = CString::new("P3C_DEFAULT").unwrap();
+    let text = CString::new("P3C_TOL").unwrap();
+    let style = CString::new("P3C_STYLE").unwrap();
+
+    assert_eq!(unsafe { dwg_entity_attrdef_set_tag(data, attrdef, tag.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_attrdef_set_prompt(data, attrdef, prompt.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_attrdef_set_default_value(data, attrdef, default_value.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_attrdef_set_insertion_point(data, attrdef, 10.0, 11.0, 12.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_attrdef_set_height(data, attrdef, 3.5) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_tolerance_set_text(data, tolerance, text.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_tolerance_set_insertion_point(data, tolerance, 20.0, 21.0, 22.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_mline_set_style_name(data, mline, style.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_mline_set_start_point(data, mline, 30.0, 31.0, 32.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_mline_set_scale_factor(data, mline, 1.75) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_shape_set_insertion_point(data, shape, 40.0, 41.0, 42.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_shape_set_size(data, shape, 2.5) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_shape_set_rotation(data, shape, 0.5) }, DWG_OK);
+
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_tag, attrdef) }, "P3C_TAG");
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_prompt, attrdef) }, "P3C_PROMPT");
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_default_value, attrdef) }, "P3C_DEFAULT");
+    assert_eq!(unsafe { read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef) }, (10.0, 11.0, 12.0));
+    assert_eq!(unsafe { read_f64(dwg_entity_attrdef_get_height, attrdef) }, 3.5);
+    assert_eq!(unsafe { read_string(dwg_entity_tolerance_get_text, tolerance) }, "P3C_TOL");
+    assert_eq!(unsafe { read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance) }, (20.0, 21.0, 22.0));
+    assert_eq!(unsafe { read_string(dwg_entity_mline_get_style_name, mline) }, "P3C_STYLE");
+    assert_eq!(unsafe { read_vec3(dwg_entity_mline_get_start_point, mline) }, (30.0, 31.0, 32.0));
+    assert_eq!(unsafe { read_f64(dwg_entity_mline_get_scale_factor, mline) }, 1.75);
+    assert_eq!(unsafe { read_vec3(dwg_entity_shape_get_insertion_point, shape) }, (40.0, 41.0, 42.0));
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_size, shape) }, 2.5);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_rotation, shape) }, 0.5);
+
+    let invalid_utf8 = [0xff_u8, 0];
+    assert_eq!(unsafe { dwg_entity_attrdef_set_tag(std::ptr::null_mut(), attrdef, tag.as_ptr()) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_tag, attrdef) }, "P3C_TAG");
+    assert_eq!(unsafe { dwg_entity_attrdef_set_prompt(data, std::ptr::null(), prompt.as_ptr()) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_prompt, attrdef) }, "P3C_PROMPT");
+    assert_eq!(unsafe { dwg_entity_attrdef_set_default_value(data, attrdef, std::ptr::null()) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_default_value, attrdef) }, "P3C_DEFAULT");
+    assert_eq!(unsafe { dwg_entity_tolerance_set_text(data, tolerance, invalid_utf8.as_ptr().cast()) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_tolerance_get_text, tolerance) }, "P3C_TOL");
+    assert_eq!(unsafe { dwg_entity_mline_set_style_name(data, mline, std::ptr::null()) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_mline_get_style_name, mline) }, "P3C_STYLE");
+
+    assert_eq!(unsafe { dwg_entity_attrdef_set_insertion_point(data, attrdef, f64::NAN, 11.0, 12.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef) }, (10.0, 11.0, 12.0));
+    assert_eq!(unsafe { dwg_entity_tolerance_set_insertion_point(std::ptr::null_mut(), tolerance, 20.0, 21.0, 22.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance) }, (20.0, 21.0, 22.0));
+    assert_eq!(unsafe { dwg_entity_mline_set_start_point(data, std::ptr::null(), 30.0, 31.0, 32.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_mline_get_start_point, mline) }, (30.0, 31.0, 32.0));
+    assert_eq!(unsafe { dwg_entity_shape_set_insertion_point(data, shape, 40.0, f64::INFINITY, 42.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_vec3(dwg_entity_shape_get_insertion_point, shape) }, (40.0, 41.0, 42.0));
+
+    assert_eq!(unsafe { dwg_entity_attrdef_set_height(data, attrdef, 0.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_attrdef_get_height, attrdef) }, 3.5);
+    assert_eq!(unsafe { dwg_entity_mline_set_scale_factor(data, mline, f64::NAN) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_mline_get_scale_factor, mline) }, 1.75);
+    assert_eq!(unsafe { dwg_entity_shape_set_size(data, shape, 0.0) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_size, shape) }, 2.5);
+    assert_eq!(unsafe { dwg_entity_shape_set_rotation(std::ptr::null_mut(), shape, 0.5) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_rotation, shape) }, 0.5);
+    assert_eq!(unsafe { dwg_entity_shape_set_rotation(data, shape, f64::INFINITY) }, DWG_EINVAL);
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_rotation, shape) }, 0.5);
+
+    assert_eq!(unsafe { dwg_entity_shape_set_size(data, tolerance, 3.0) }, DWG_ETYPE);
+    assert_last_error(DWG_ETYPE);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_size, shape) }, 2.5);
+
+    let foreign_fixture = write_batch3_dwg("acadrust_ffi_p3c2_annotation_foreign");
+    let mut foreign_data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut foreign_data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(foreign_fixture.c_path().as_ptr(), foreign_data) }, DWG_OK);
+    let foreign_shape = find_object_of_type(foreign_data, DwgObjectType::Shape as i32);
+    assert_eq!(unsafe { dwg_entity_shape_set_size(data, foreign_shape, 3.0) }, DWG_ENOTFOUND);
+    assert_last_error(DWG_ENOTFOUND);
+    assert_eq!(unsafe { read_f64(dwg_entity_shape_get_size, shape) }, 2.5);
+
+    assert_eq!(unsafe { dwg_entity_attrdef_set_tag(data, attrdef, tag.as_ptr()) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_tolerance_set_insertion_point(data, tolerance, 20.0, 21.0, 22.0) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_mline_set_scale_factor(data, mline, 1.75) }, DWG_OK);
+    assert_eq!(unsafe { dwg_entity_shape_set_rotation(data, shape, 0.5) }, DWG_OK);
+    assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
+
+    unsafe { dwg_data_destroy(foreign_data) };
+    unsafe { dwg_data_destroy(data) };
 }
 
 fn write_batch4_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {

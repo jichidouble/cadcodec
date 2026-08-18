@@ -316,6 +316,70 @@ vec3_setter!(
 f64_setter!(dwg_entity_mtext_set_height, MText, MText, height, positive);
 vec3_setter!(dwg_entity_ray_set_base_point, Ray, Ray, base_point);
 vec3_setter!(dwg_entity_xline_set_base_point, XLine, XLine, base_point);
+string_setter!(
+    dwg_entity_attrdef_set_tag,
+    AttributeDefinition,
+    AttributeDefinition,
+    tag,
+    allow_empty
+);
+string_setter!(
+    dwg_entity_attrdef_set_prompt,
+    AttributeDefinition,
+    AttributeDefinition,
+    prompt,
+    allow_empty
+);
+string_setter!(
+    dwg_entity_attrdef_set_default_value,
+    AttributeDefinition,
+    AttributeDefinition,
+    default_value,
+    allow_empty
+);
+vec3_setter!(
+    dwg_entity_attrdef_set_insertion_point,
+    AttributeDefinition,
+    AttributeDefinition,
+    insertion_point
+);
+f64_setter!(
+    dwg_entity_attrdef_set_height,
+    AttributeDefinition,
+    AttributeDefinition,
+    height,
+    positive
+);
+string_setter!(dwg_entity_tolerance_set_text, Tolerance, Tolerance, text, allow_empty);
+vec3_setter!(
+    dwg_entity_tolerance_set_insertion_point,
+    Tolerance,
+    Tolerance,
+    insertion_point
+);
+string_setter!(dwg_entity_mline_set_style_name, MLine, MLine, style_name, allow_empty);
+vec3_setter!(dwg_entity_mline_set_start_point, MLine, MLine, start_point);
+f64_setter!(
+    dwg_entity_mline_set_scale_factor,
+    MLine,
+    MLine,
+    scale_factor,
+    positive
+);
+vec3_setter!(
+    dwg_entity_shape_set_insertion_point,
+    Shape,
+    Shape,
+    insertion_point
+);
+f64_setter!(dwg_entity_shape_set_size, Shape, Shape, size, positive);
+f64_setter!(
+    dwg_entity_shape_set_rotation,
+    Shape,
+    Shape,
+    rotation,
+    finite_only
+);
 
 /// Set a RAY entity's normalized direction vector.
 ///
