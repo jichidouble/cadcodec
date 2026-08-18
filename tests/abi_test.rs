@@ -2206,7 +2206,6 @@ fn phase3c_insert_viewport_hatch_setters() {
     assert_eq!(
         unsafe { read_f64(dwg_entity_viewport_get_height, viewport) },
         100.0
-
     );
     assert_failure_preserves!(
         dwg_entity_viewport_set_width(std::ptr::null_mut(), viewport, 200.0),
@@ -2254,10 +2253,55 @@ fn phase3c_insert_viewport_hatch_setters() {
     );
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
 
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(std::ptr::null_mut(), viewport, 100.0),
+        DWG_EINVAL,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(data, std::ptr::null(), 100.0),
+        DWG_EINVAL,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(data, viewport, 0.0),
+        DWG_EINVAL,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(data, viewport, f64::NAN),
+        DWG_EINVAL,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(data, insert, 100.0),
+        DWG_ETYPE,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_failure_preserves!(
+        dwg_entity_viewport_set_height(data, foreign_viewport, 100.0),
+        DWG_ENOTFOUND,
+        read_f64(dwg_entity_viewport_get_height, viewport),
+        100.0
+    );
+    assert_eq!(
+        unsafe { dwg_entity_viewport_set_height(data, viewport, 100.0) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { read_f64(dwg_entity_viewport_get_height, viewport) },
+        100.0
+    );
+    assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
+
     assert_eq!(
         unsafe { dwg_entity_hatch_set_elevation(hatch_data, hatch, 7.0) },
         DWG_OK
-
     );
     assert_eq!(
         unsafe { read_f64(dwg_entity_hatch_get_elevation, hatch) },
