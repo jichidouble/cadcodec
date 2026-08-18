@@ -103,6 +103,39 @@ macro_rules! f64_setter {
     };
 }
 
+macro_rules! string_setter {
+    ($name:ident, $kind:ident, $entity:ident, $field:ident, allow_empty) => {
+        #[doc = concat!("Set the ", stringify!($field), " of a ", stringify!($kind), " entity.")]
+        #[doc = "\n# Safety\n\n`data` must be a valid document pointer, `obj` must be a valid entity object from that document, and `value` must point to a valid NUL-terminated string."]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            value: *const i8,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            let Ok(value) = read_c_string(value) else {
+                set_last_error(DWG_EINVAL, "value is not valid UTF-8");
+                return DWG_EINVAL;
+            };
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$entity(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    entity.$field = value;
+                    Ok(())
+                },
+            )
+        }
+    };
+}
+
 fn valid_positive(value: f64) -> bool {
     finite(value) && value > 0.0
 }
@@ -265,6 +298,22 @@ f64_setter!(
     minor_axis_ratio,
     positive
 );
+string_setter!(dwg_entity_text_set_value, Text, Text, value, allow_empty);
+vec3_setter!(
+    dwg_entity_text_set_insertion_point,
+    Text,
+    Text,
+    insertion_point
+);
+f64_setter!(dwg_entity_text_set_height, Text, Text, height, positive);
+string_setter!(dwg_entity_mtext_set_value, MText, MText, value, allow_empty);
+vec3_setter!(
+    dwg_entity_mtext_set_insertion_point,
+    MText,
+    MText,
+    insertion_point
+);
+f64_setter!(dwg_entity_mtext_set_height, MText, MText, height, positive);
 vec3_setter!(dwg_entity_ray_set_base_point, Ray, Ray, base_point);
 vec3_setter!(dwg_entity_xline_set_base_point, XLine, XLine, base_point);
 

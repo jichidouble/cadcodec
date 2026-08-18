@@ -832,6 +832,204 @@ fn assert_last_error(code: i32) {
     assert_eq!(dwg_last_error(buffer.as_mut_ptr(), buffer.len(), &mut needed), code);
 }
 
+unsafe fn read_string(
+    getter: unsafe extern "C" fn(*const DwgObject, *mut i8, usize, *mut usize) -> i32,
+    obj: *const DwgObject,
+) -> String {
+    let mut needed = 0;
+    assert_eq!(getter(obj, std::ptr::null_mut(), 0, &mut needed), DWG_OK);
+    let mut buffer = vec![0_i8; needed];
+    assert_eq!(
+        getter(obj, buffer.as_mut_ptr(), buffer.len(), &mut needed),
+        DWG_OK
+    );
+    std::ffi::CStr::from_ptr(buffer.as_ptr())
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn phase3c_text_setters() {
+    let (text_data, _text_fixture) = open_sample_document();
+    let text = find_object_of_type(text_data, DwgObjectType::Text as i32);
+    let line = find_object_of_type(text_data, DwgObjectType::Line as i32);
+    assert!(!text.is_null());
+    assert!(!line.is_null());
+
+    let (mtext_path, mtext_path_buf) = write_batch1_dwg("acadrust_ffi_p3c2_text");
+    let mut mtext_data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut mtext_data) }, DWG_OK);
+    assert_eq!(
+        unsafe { dwg_read_file(mtext_path.as_ptr(), mtext_data) },
+        DWG_OK
+    );
+    let mtext = find_object_of_type(mtext_data, DwgObjectType::MText as i32);
+    let mtext_line = find_object_of_type(mtext_data, DwgObjectType::Line as i32);
+    assert!(!mtext.is_null());
+    assert!(!mtext_line.is_null());
+
+    let text_value = CString::new("P3C TEXT").unwrap();
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, text, text_value.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_text_set_insertion_point(text_data, text, 1.0, 2.0, 3.0) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_text_set_height(text_data, text, 4.0) },
+        DWG_OK
+    );
+
+    let mtext_value = CString::new("P3C\\PMTEXT").unwrap();
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, mtext, mtext_value.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_insertion_point(mtext_data, mtext, 5.0, 6.0, 7.0) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_height(mtext_data, mtext, 2.25) },
+        DWG_OK
+    );
+
+    assert_eq!(
+        unsafe { read_string(dwg_entity_text_get_value, text) },
+        "P3C TEXT"
+    );
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_text_get_insertion_point, text) },
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(unsafe { read_f64(dwg_entity_text_get_height, text) }, 4.0);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_mtext_get_value, mtext) },
+        "P3C\\PMTEXT"
+    );
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_mtext_get_insertion_point, mtext) },
+        (5.0, 6.0, 7.0)
+    );
+    assert_eq!(
+        unsafe { read_f64(dwg_entity_mtext_get_height, mtext) },
+        2.25
+    );
+
+    let empty = CString::new("").unwrap();
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, text, empty.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, mtext, empty.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(unsafe { read_string(dwg_entity_text_get_value, text) }, "");
+    assert_eq!(
+        unsafe { read_string(dwg_entity_mtext_get_value, mtext) },
+        ""
+    );
+
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, text, std::ptr::null()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_text_get_value, text) }, "");
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, mtext, std::ptr::null()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_mtext_get_value, mtext) },
+        ""
+    );
+
+    let invalid_utf8 = [0xff_u8, 0];
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, text, invalid_utf8.as_ptr().cast()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_string(dwg_entity_text_get_value, text) }, "");
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, mtext, invalid_utf8.as_ptr().cast()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_mtext_get_value, mtext) },
+        ""
+    );
+
+    assert_eq!(
+        unsafe { dwg_entity_text_set_height(text_data, text, 0.0) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_text_get_height, text) }, 4.0);
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_height(mtext_data, mtext, f64::NAN) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_f64(dwg_entity_mtext_get_height, mtext) },
+        2.25
+    );
+
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, line, text_value.as_ptr()) },
+        DWG_ETYPE
+    );
+    assert_last_error(DWG_ETYPE);
+    assert_eq!(unsafe { read_string(dwg_entity_text_get_value, text) }, "");
+    assert_eq!(
+        unsafe {
+            dwg_entity_mtext_set_insertion_point(mtext_data, mtext_line, 8.0, 9.0, 10.0)
+        },
+        DWG_ETYPE
+    );
+    assert_last_error(DWG_ETYPE);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_mtext_get_insertion_point, mtext) },
+        (5.0, 6.0, 7.0)
+    );
+
+    let (foreign_data, _foreign_fixture) = open_sample_document();
+    let foreign_text = find_object_of_type(foreign_data, DwgObjectType::Text as i32);
+    assert_eq!(
+        unsafe { dwg_entity_text_set_height(text_data, foreign_text, 6.0) },
+        DWG_ENOTFOUND
+    );
+    assert_last_error(DWG_ENOTFOUND);
+    assert_eq!(unsafe { read_f64(dwg_entity_text_get_height, text) }, 4.0);
+
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(text_data, text, text_value.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, mtext, mtext_value.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(dwg_last_error_code(), DWG_OK);
+
+    unsafe { dwg_data_destroy(foreign_data) };
+    unsafe { dwg_data_destroy(mtext_data) };
+    let mtext_dir = mtext_path_buf.parent().map(|path| path.to_path_buf());
+    let _ = std::fs::remove_file(mtext_path_buf);
+    if let Some(mtext_dir) = mtext_dir {
+        let _ = std::fs::remove_dir(mtext_dir);
+    }
+    unsafe { dwg_data_destroy(text_data) };
+}
+
 #[test]
 fn phase3c_basic_geometry_setters_roundtrip_through_getters() {
     let (path, path_buf) = write_batch1_dwg("acadrust_ffi_p3c1");
