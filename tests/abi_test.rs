@@ -805,6 +805,16 @@ unsafe fn read_vec3(
     (x, y, z)
 }
 
+unsafe fn read_vec2(
+    getter: unsafe extern "C" fn(*const DwgObject, *mut f64, *mut f64) -> i32,
+    obj: *const DwgObject,
+) -> (f64, f64) {
+    let mut x = 0.0;
+    let mut y = 0.0;
+    assert_eq!(getter(obj, &mut x, &mut y), DWG_OK);
+    (x, y)
+}
+
 unsafe fn read_f64(getter: unsafe extern "C" fn(*const DwgObject, *mut f64) -> i32, obj: *const DwgObject) -> f64 {
     let mut value = 0.0;
     assert_eq!(getter(obj, &mut value), DWG_OK);
@@ -2513,33 +2523,62 @@ fn phase3c_insert_viewport_hatch_setters() {
 }
 
 
-fn write_batch4_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
-    use acadrust::entities::{Dimension, DimensionLinear, RasterImage};
-    use acadrust::types::{Vector2, Vector3};
+fn write_batch4_dwg(dir_name: &str) -> SampleDwgFixture {
+    use acadrust::entities::{
+        Dimension, DimensionLinear, Helix, Light, RasterImage, Underlay, Wipeout,
+    };
+    use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
 
-    let dir = std::env::temp_dir().join(dir_name);
+    let suffix = SAMPLE_DWG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("{dir_name}_{}_{}", std::process::id(), suffix));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("batch4.dwg");
-    let _ = std::fs::remove_file(&path);
 
     let mut doc = CadDocument::new();
-    let dim = DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(dim))).unwrap();
 
-    let mut img = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 640.0, 480.0);
+    let mut helix = Helix::new();
+    helix.axis_base_point = Vector3::new(-1.0, -2.0, -3.0);
+    helix.radius = 3.0;
+    helix.turns = 2.0;
+    helix.turn_height = 0.75;
+    doc.add_entity(EntityType::Helix(helix)).unwrap();
+
+    let dim = Dimension::Linear(DimensionLinear::new(
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 0.0, 0.0),
+    ));
+    doc.add_entity(EntityType::Dimension(dim)).unwrap();
+
+    let img = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 320.0, 240.0);
     doc.add_entity(EntityType::RasterImage(img)).unwrap();
 
+    let mut underlay = Underlay::pdf();
+    underlay.insertion_point = Vector3::new(2.0, 3.0, 4.0);
+    doc.add_entity(EntityType::Underlay(underlay)).unwrap();
+
+    let mut light = Light::new();
+    light.position = Vector3::new(5.0, 6.0, 7.0);
+    doc.add_entity(EntityType::Light(light)).unwrap();
+
+    let mut wipeout = Wipeout::new();
+    wipeout.insertion_point = Vector3::new(8.0, 9.0, 10.0);
+    doc.add_entity(EntityType::Wipeout(wipeout)).unwrap();
+
     DwgWriter::write_to_file(&path, &doc).unwrap();
-    (CString::new(path.to_str().unwrap()).unwrap(), path)
+    SampleDwgFixture {
+        c_path: CString::new(path.to_str().unwrap()).unwrap(),
+        path,
+        dir,
+    }
 }
 
 #[test]
 fn batch4_dimension_image_getters() {
-    let (path, path_buf) = write_batch4_dwg("acadrust_ffi_p3b4");
+    let fixture = write_batch4_dwg("acadrust_ffi_p3b4");
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
 
     let dim = find_object_of_type(data, acadrust::ffi::DwgObjectType::Dimension as i32);
     assert!(!dim.is_null());
@@ -2550,7 +2589,7 @@ fn batch4_dimension_image_getters() {
     let mut y = 0.0;
     let mut z = 0.0;
     assert_eq!(unsafe { dwg_entity_dimension_get_definition_point(dim, &mut x, &mut y, &mut z) }, DWG_OK);
-    assert!((x - 0.0).abs() < 1e-9 && (y - 0.0).abs() < 1e-9);
+    assert!(x.abs() < 1e-9 && y.abs() < 1e-9 && z.abs() < 1e-9);
     let mut needed = 0usize;
     let mut buf = [0u8; 64];
     assert_eq!(
@@ -2567,8 +2606,373 @@ fn batch4_dimension_image_getters() {
     let mut w = 0.0;
     let mut h = 0.0;
     assert_eq!(unsafe { dwg_entity_raster_image_get_size(img, &mut w, &mut h) }, DWG_OK);
-    assert!((w - 640.0).abs() < 1e-9 && (h - 480.0).abs() < 1e-9);
+    assert!((w - 320.0).abs() < 1e-9 && (h - 240.0).abs() < 1e-9);
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(&path_buf);
+}
+
+#[test]
+fn phase3c_reference_setters() {
+    macro_rules! assert_failure_preserves {
+        ($call:expr, $code:expr, $read:expr, $expected:expr) => {{
+            assert_eq!(unsafe { $call }, $code);
+            assert_last_error($code);
+            assert_eq!(unsafe { $read }, $expected);
+        }};
+    }
+
+    macro_rules! assert_vec3_setter {
+        ($data:expr, $setter:ident, $getter:ident, $obj:expr, $wrong:expr, $foreign:expr, $before:expr, $after:expr) => {{
+            let before = $before;
+            let after = $after;
+            assert_failure_preserves!(
+                $setter(std::ptr::null_mut(), $obj, after.0, after.1, after.2),
+                DWG_EINVAL,
+                read_vec3($getter, $obj),
+                before
+            );
+            assert_failure_preserves!(
+                $setter($data, std::ptr::null(), after.0, after.1, after.2),
+                DWG_EINVAL,
+                read_vec3($getter, $obj),
+                before
+            );
+            assert_failure_preserves!(
+                $setter($data, $obj, f64::NAN, after.1, after.2),
+                DWG_EINVAL,
+                read_vec3($getter, $obj),
+                before
+            );
+            assert_failure_preserves!(
+                $setter($data, $wrong, after.0, after.1, after.2),
+                DWG_ETYPE,
+                read_vec3($getter, $obj),
+                before
+            );
+            assert_failure_preserves!(
+                $setter($data, $foreign, after.0, after.1, after.2),
+                DWG_ENOTFOUND,
+                read_vec3($getter, $obj),
+                before
+            );
+            assert_eq!(
+                unsafe { $setter($data, $obj, after.0, after.1, after.2) },
+                DWG_OK
+            );
+            assert_eq!(dwg_last_error_code(), DWG_OK);
+            assert_eq!(unsafe { read_vec3($getter, $obj) }, after);
+        }};
+    }
+
+    macro_rules! assert_positive_setter {
+        ($data:expr, $setter:ident, $getter:ident, $obj:expr, $wrong:expr, $foreign:expr, $before:expr, $after:expr) => {{
+            assert_failure_preserves!(
+                $setter(std::ptr::null_mut(), $obj, $after),
+                DWG_EINVAL,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_failure_preserves!(
+                $setter($data, std::ptr::null(), $after),
+                DWG_EINVAL,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_failure_preserves!(
+                $setter($data, $obj, 0.0),
+                DWG_EINVAL,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_failure_preserves!(
+                $setter($data, $obj, f64::NAN),
+                DWG_EINVAL,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_failure_preserves!(
+                $setter($data, $wrong, $after),
+                DWG_ETYPE,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_failure_preserves!(
+                $setter($data, $foreign, $after),
+                DWG_ENOTFOUND,
+                read_f64($getter, $obj),
+                $before
+            );
+            assert_eq!(unsafe { $setter($data, $obj, $after) }, DWG_OK);
+            assert_eq!(dwg_last_error_code(), DWG_OK);
+            assert_eq!(unsafe { read_f64($getter, $obj) }, $after);
+        }};
+    }
+
+    let fixture = write_batch4_dwg("acadrust_ffi_p3c2_reference");
+    let mut data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
+    assert_eq!(
+        unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) },
+        DWG_OK
+    );
+
+    let helix = find_object_of_type(data, DwgObjectType::Helix as i32);
+    let dimension = find_object_of_type(data, DwgObjectType::Dimension as i32);
+    let raster = find_object_of_type(data, DwgObjectType::RasterImage as i32);
+    let underlay = find_object_of_type(data, DwgObjectType::Underlay as i32);
+    let light = find_object_of_type(data, DwgObjectType::Light as i32);
+    let wipeout = find_object_of_type(data, DwgObjectType::Wipeout as i32);
+    assert!(
+        !helix.is_null()
+            && !dimension.is_null()
+            && !raster.is_null()
+            && !underlay.is_null()
+            && !light.is_null()
+            && !wipeout.is_null()
+    );
+
+    let foreign_fixture = write_batch4_dwg("acadrust_ffi_p3c2_reference_foreign");
+    let mut foreign_data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut foreign_data) }, DWG_OK);
+    assert_eq!(
+        unsafe { dwg_read_file(foreign_fixture.c_path().as_ptr(), foreign_data) },
+        DWG_OK
+    );
+    let foreign_helix = find_object_of_type(foreign_data, DwgObjectType::Helix as i32);
+    let foreign_dimension = find_object_of_type(foreign_data, DwgObjectType::Dimension as i32);
+    let foreign_raster = find_object_of_type(foreign_data, DwgObjectType::RasterImage as i32);
+    let foreign_underlay = find_object_of_type(foreign_data, DwgObjectType::Underlay as i32);
+    let foreign_light = find_object_of_type(foreign_data, DwgObjectType::Light as i32);
+    let foreign_wipeout = find_object_of_type(foreign_data, DwgObjectType::Wipeout as i32);
+
+    assert_vec3_setter!(
+        data,
+        dwg_entity_helix_set_axis_base_point,
+        dwg_entity_helix_get_axis_base_point,
+        helix,
+        dimension,
+        foreign_helix,
+        (-1.0, -2.0, -3.0),
+        (1.0, 2.0, 3.0)
+    );
+    assert_positive_setter!(
+        data,
+        dwg_entity_helix_set_radius,
+        dwg_entity_helix_get_radius,
+        helix,
+        dimension,
+        foreign_helix,
+        3.0,
+        5.0
+    );
+    assert_positive_setter!(
+        data,
+        dwg_entity_helix_set_turns,
+        dwg_entity_helix_get_turns,
+        helix,
+        dimension,
+        foreign_helix,
+        2.0,
+        4.0
+    );
+    assert_positive_setter!(
+        data,
+        dwg_entity_helix_set_turn_height,
+        dwg_entity_helix_get_turn_height,
+        helix,
+        dimension,
+        foreign_helix,
+        0.75,
+        1.5
+    );
+
+    let style = CString::new("P3C_DIM").unwrap();
+    let empty_style = CString::new("").unwrap();
+    let invalid_utf8 = [0xff_u8, 0];
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(std::ptr::null_mut(), dimension, style.as_ptr()),
+        DWG_EINVAL,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(data, std::ptr::null(), style.as_ptr()),
+        DWG_EINVAL,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(data, dimension, std::ptr::null()),
+        DWG_EINVAL,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(data, dimension, invalid_utf8.as_ptr().cast()),
+        DWG_EINVAL,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(data, helix, style.as_ptr()),
+        DWG_ETYPE,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_failure_preserves!(
+        dwg_entity_dimension_set_style_name(data, foreign_dimension, style.as_ptr()),
+        DWG_ENOTFOUND,
+        read_string(dwg_entity_dimension_get_style_name, dimension),
+        "Standard"
+    );
+    assert_eq!(
+        unsafe {
+            dwg_entity_dimension_set_style_name(data, dimension, empty_style.as_ptr())
+        },
+        DWG_OK
+    );
+    assert_eq!(dwg_last_error_code(), DWG_OK);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_dimension_get_style_name, dimension) },
+        ""
+    );
+    assert_eq!(
+        unsafe { dwg_entity_dimension_set_style_name(data, dimension, style.as_ptr()) },
+        DWG_OK
+    );
+    assert_eq!(dwg_last_error_code(), DWG_OK);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_dimension_get_style_name, dimension) },
+        "P3C_DIM"
+    );
+
+    assert_vec3_setter!(
+        data,
+        dwg_entity_dimension_set_definition_point,
+        dwg_entity_dimension_get_definition_point,
+        dimension,
+        helix,
+        foreign_dimension,
+        (0.0, 0.0, 0.0),
+        (10.0, 11.0, 12.0)
+    );
+    assert_vec3_setter!(
+        data,
+        dwg_entity_dimension_set_text_middle_point,
+        dwg_entity_dimension_get_text_middle_point,
+        dimension,
+        helix,
+        foreign_dimension,
+        (0.0, 0.0, 0.0),
+        (13.0, 14.0, 15.0)
+    );
+    assert_vec3_setter!(
+        data,
+        dwg_entity_raster_image_set_insertion_point,
+        dwg_entity_raster_image_get_insertion_point,
+        raster,
+        dimension,
+        foreign_raster,
+        (1.0, 1.0, 0.0),
+        (20.0, 21.0, 22.0)
+    );
+
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(std::ptr::null_mut(), raster, 640.0, 480.0),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, std::ptr::null(), 640.0, 480.0),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, raster, 0.0, 480.0),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, raster, 640.0, 0.0),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, raster, f64::NAN, 480.0),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, raster, 640.0, f64::INFINITY),
+        DWG_EINVAL,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, dimension, 640.0, 480.0),
+        DWG_ETYPE,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_failure_preserves!(
+        dwg_entity_raster_image_set_size(data, foreign_raster, 640.0, 480.0),
+        DWG_ENOTFOUND,
+        read_vec2(dwg_entity_raster_image_get_size, raster),
+        (320.0, 240.0)
+    );
+    assert_eq!(
+        unsafe { dwg_entity_raster_image_set_size(data, raster, 640.0, 480.0) },
+        DWG_OK
+    );
+    assert_eq!(dwg_last_error_code(), DWG_OK);
+    assert_eq!(
+        unsafe { read_vec2(dwg_entity_raster_image_get_size, raster) },
+        (640.0, 480.0)
+    );
+
+    assert_vec3_setter!(
+        data,
+        dwg_entity_underlay_set_insertion_point,
+        dwg_entity_underlay_get_insertion_point,
+        underlay,
+        light,
+        foreign_underlay,
+        (2.0, 3.0, 4.0),
+        (30.0, 31.0, 32.0)
+    );
+    assert_vec3_setter!(
+        data,
+        dwg_entity_light_set_position,
+        dwg_entity_light_get_position,
+        light,
+        wipeout,
+        foreign_light,
+        (5.0, 6.0, 7.0),
+        (40.0, 41.0, 42.0)
+    );
+    assert_vec3_setter!(
+        data,
+        dwg_entity_wipeout_set_insertion_point,
+        dwg_entity_wipeout_get_insertion_point,
+        wipeout,
+        underlay,
+        foreign_wipeout,
+        (8.0, 9.0, 10.0),
+        (50.0, 51.0, 52.0)
+    );
+
+    let mut measurement = 0.0;
+    assert_eq!(
+        unsafe { dwg_entity_dimension_get_measurement(dimension, &mut measurement) },
+        DWG_OK
+    );
+    assert_eq!(measurement, 10.0);
+
+    unsafe { dwg_data_destroy(foreign_data) };
+    unsafe { dwg_data_destroy(data) };
 }

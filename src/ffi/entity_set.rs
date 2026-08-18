@@ -7,7 +7,7 @@ use crate::ffi::error::set_last_error;
 use crate::ffi::object::{DwgObjectType, FfiDocument};
 use crate::ffi::types::*;
 use crate::ffi::util::{color_from_c, finite, finite3, nonzero3, read_c_string};
-use crate::types::Vector3;
+use crate::types::{Vector2, Vector3};
 
 macro_rules! vec3_setter {
     ($name:ident, $kind:ident, $entity:ident, $field:ident) => {
@@ -744,3 +744,177 @@ pub unsafe extern "C" fn dwg_entity_face3d_set_corner(
         },
     )
 }
+
+vec3_setter!(
+    dwg_entity_helix_set_axis_base_point,
+    Helix,
+    Helix,
+    axis_base_point
+);
+f64_setter!(dwg_entity_helix_set_radius, Helix, Helix, radius, positive);
+f64_setter!(dwg_entity_helix_set_turns, Helix, Helix, turns, positive);
+f64_setter!(
+    dwg_entity_helix_set_turn_height,
+    Helix,
+    Helix,
+    turn_height,
+    positive
+);
+
+/// Set a DIMENSION entity's style name.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer, `obj` must be a valid DIMENSION object from that
+/// document, and `value` must point to a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_set_style_name(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    value: *const i8,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    let Ok(value) = read_c_string(value) else {
+        set_last_error(DWG_EINVAL, "value is not valid UTF-8");
+        return DWG_EINVAL;
+    };
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Dimension),
+        move |entity| {
+            let EntityType::Dimension(dimension) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            dimension.base_mut().style_name = value;
+            Ok(())
+        },
+    )
+}
+
+/// Set a DIMENSION entity's definition point.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid DIMENSION object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_set_definition_point(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Dimension),
+        move |entity| {
+            let EntityType::Dimension(dimension) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            dimension.base_mut().definition_point = Vector3::new(x, y, z);
+            Ok(())
+        },
+    )
+}
+
+/// Set a DIMENSION entity's text middle point.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid DIMENSION object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_dimension_set_text_middle_point(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Dimension),
+        move |entity| {
+            let EntityType::Dimension(dimension) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            dimension.base_mut().text_middle_point = Vector3::new(x, y, z);
+            Ok(())
+        },
+    )
+}
+
+vec3_setter!(
+    dwg_entity_raster_image_set_insertion_point,
+    RasterImage,
+    RasterImage,
+    insertion_point
+);
+
+/// Set a RASTERIMAGE entity's pixel width and height atomically.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid RASTERIMAGE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_raster_image_set_size(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    width: f64,
+    height: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !valid_positive(width) || !valid_positive(height) {
+        set_last_error(DWG_EINVAL, "width and height must be finite and positive");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::RasterImage),
+        move |entity| {
+            let EntityType::RasterImage(raster) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            raster.size = Vector2::new(width, height);
+            Ok(())
+        },
+    )
+}
+
+vec3_setter!(
+    dwg_entity_underlay_set_insertion_point,
+    Underlay,
+    Underlay,
+    insertion_point
+);
+vec3_setter!(dwg_entity_light_set_position, Light, Light, position);
+vec3_setter!(
+    dwg_entity_wipeout_set_insertion_point,
+    Wipeout,
+    Wipeout,
+    insertion_point
+);
