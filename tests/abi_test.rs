@@ -378,6 +378,98 @@ fn c_entity_set_basic_compiles_links_and_runs() {
     result.unwrap_or_else(|message| panic!("{message}"));
 }
 
+fn write_fixed_setter_dwg(dir_name: &str) -> SampleDwgFixture {
+    use acadrust::entities::{Dimension, DimensionLinear, Insert, RasterImage, Text};
+    use acadrust::types::Vector3;
+    use acadrust::{CadDocument, DwgWriter, EntityType};
+
+    let suffix = SAMPLE_DWG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("{dir_name}_{}_{}", std::process::id(), suffix));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("fixed-setters.dwg");
+
+    let mut doc = CadDocument::new();
+
+    let mut text = Text::new();
+    text.value = "before".to_string();
+    text.height = 1.0;
+    doc.add_entity(EntityType::Text(text)).unwrap();
+
+    let insert = Insert::new("WALL", Vector3::new(1.0, 2.0, 3.0));
+    doc.add_entity(EntityType::Insert(insert)).unwrap();
+
+    let dimension = Dimension::Linear(DimensionLinear::new(
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 0.0, 0.0),
+    ));
+    doc.add_entity(EntityType::Dimension(dimension)).unwrap();
+
+    let image = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 320.0, 240.0);
+    doc.add_entity(EntityType::RasterImage(image)).unwrap();
+
+    DwgWriter::write_to_file(&path, &doc).unwrap();
+    SampleDwgFixture {
+        c_path: CString::new(path.to_str().unwrap()).unwrap(),
+        path,
+        dir,
+    }
+}
+
+#[test]
+fn c_entity_set_fixed_compiles_links_and_runs() {
+    let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let dll = ffi_dll()
+        .expect("acadrust.dll not found; build the release ffi cdylib before running this test");
+    let fixture = write_fixed_setter_dwg("acadrust_c_entity_set_fixed");
+    let out_dir = fixture.path().parent().unwrap();
+    let exe = out_dir.join("c_entity_set_fixed.exe");
+    let src = std::path::Path::new(manifest).join("tests/ffi/c_entity_set_fixed.c");
+
+    let result = (|| -> Result<(), String> {
+        let compile = std::process::Command::new(&cc)
+            .arg(src.as_os_str())
+            .arg(dll.as_os_str())
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .map_err(|error| format!("failed to launch C compiler {cc}: {error}"))?;
+        if !compile.status.success() {
+            return Err(format!(
+                "C compile/link failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+                compile.status.code(),
+                String::from_utf8_lossy(&compile.stdout),
+                String::from_utf8_lossy(&compile.stderr)
+            ));
+        }
+        eprintln!(
+            "C fixed entity setter compiled and linked: compiler={cc}, exe={}",
+            exe.display()
+        );
+
+        let output = std::process::Command::new(&exe)
+            .arg(fixture.c_path().to_str().unwrap())
+            .output()
+            .map_err(|error| format!("failed to run c_entity_set_fixed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "c_entity_set_fixed exited with {:?}\nstdout:\n{}\nstderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        eprintln!(
+            "C fixed entity setter executable ran successfully: {}",
+            exe.display()
+        );
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&exe);
+    result.unwrap_or_else(|message| panic!("{message}"));
+}
+
 fn write_entities_fixture() -> (CString, std::path::PathBuf) {
     use acadrust::entities::{Circle, Ellipse, Hatch, HatchPattern, Line, LwPolyline, LwVertex, MText};
     use acadrust::types::Vector3;
