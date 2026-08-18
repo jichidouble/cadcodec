@@ -288,6 +288,63 @@ fn c_entity_batch1_compiles_links_and_runs() {
     );
 }
 
+#[test]
+fn c_entity_set_basic_compiles_links_and_runs() {
+    let cc = std::env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let dll = ffi_dll()
+        .expect("acadrust.dll not found; build the release ffi cdylib before running this test");
+    let (fixture, fixture_path) = write_sample_dwg("acadrust_c_entity_set_basic");
+    let out_dir = fixture_path.parent().unwrap();
+    let exe = out_dir.join("c_entity_set_basic.exe");
+    let src = std::path::Path::new(manifest).join("tests/ffi/c_entity_set_basic.c");
+
+    let result = (|| -> Result<(), String> {
+        let compile = std::process::Command::new(&cc)
+            .arg(src.as_os_str())
+            .arg(dll.as_os_str())
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .map_err(|error| format!("failed to launch C compiler {cc}: {error}"))?;
+        if !compile.status.success() {
+            return Err(format!(
+                "C compile/link failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+                compile.status.code(),
+                String::from_utf8_lossy(&compile.stdout),
+                String::from_utf8_lossy(&compile.stderr)
+            ));
+        }
+        eprintln!(
+            "C basic entity setter compiled and linked: compiler={cc}, exe={}",
+            exe.display()
+        );
+
+        let output = std::process::Command::new(&exe)
+            .arg(fixture.as_c_str().to_str().unwrap())
+            .output()
+            .map_err(|error| format!("failed to run c_entity_set_basic: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "c_entity_set_basic exited with {:?}\nstdout:\n{}\nstderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        eprintln!(
+            "C basic entity setter executable ran successfully: {}",
+            exe.display()
+        );
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&fixture_path);
+    let _ = std::fs::remove_file(&exe);
+    let _ = std::fs::remove_dir(out_dir);
+    result.unwrap_or_else(|message| panic!("{message}"));
+}
+
 fn write_entities_fixture() -> (CString, std::path::PathBuf) {
     use acadrust::entities::{Circle, Ellipse, Hatch, HatchPattern, Line, LwPolyline, LwVertex, MText};
     use acadrust::types::Vector3;
