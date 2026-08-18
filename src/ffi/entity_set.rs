@@ -350,14 +350,26 @@ f64_setter!(
     height,
     positive
 );
-string_setter!(dwg_entity_tolerance_set_text, Tolerance, Tolerance, text, allow_empty);
+string_setter!(
+    dwg_entity_tolerance_set_text,
+    Tolerance,
+    Tolerance,
+    text,
+    allow_empty
+);
 vec3_setter!(
     dwg_entity_tolerance_set_insertion_point,
     Tolerance,
     Tolerance,
     insertion_point
 );
-string_setter!(dwg_entity_mline_set_style_name, MLine, MLine, style_name, allow_empty);
+string_setter!(
+    dwg_entity_mline_set_style_name,
+    MLine,
+    MLine,
+    style_name,
+    allow_empty
+);
 vec3_setter!(dwg_entity_mline_set_start_point, MLine, MLine, start_point);
 f64_setter!(
     dwg_entity_mline_set_scale_factor,
@@ -379,6 +391,210 @@ f64_setter!(
     Shape,
     rotation,
     finite_only
+);
+
+/// Set an INSERT entity's block name.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer, `obj` must be a valid INSERT object from that
+/// document, and `value` must point to a valid non-empty NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_insert_set_block_name(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    value: *const i8,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    let Ok(value) = read_c_string(value) else {
+        set_last_error(DWG_EINVAL, "value is not valid UTF-8");
+        return DWG_EINVAL;
+    };
+    if value.is_empty() {
+        set_last_error(DWG_EINVAL, "block name must not be empty");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Insert),
+        move |entity| {
+            let EntityType::Insert(insert) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            insert.block_name = value;
+            Ok(())
+        },
+    )
+}
+
+vec3_setter!(
+    dwg_entity_insert_set_insert_point,
+    Insert,
+    Insert,
+    insert_point
+);
+f64_setter!(
+    dwg_entity_insert_set_rotation,
+    Insert,
+    Insert,
+    rotation,
+    finite_only
+);
+
+/// Set an INSERT entity's normalized normal vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid INSERT object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_insert_set_normal(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !nonzero3(x, y, z) {
+        set_last_error(DWG_EINVAL, "normal must be finite and nonzero");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Insert),
+        move |entity| {
+            let EntityType::Insert(insert) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            insert.normal = normalize_direction(x, y, z);
+            Ok(())
+        },
+    )
+}
+
+/// Set an INSERT entity's array dimensions and spacing.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid INSERT object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_insert_set_array(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    columns: u16,
+    rows: u16,
+    column_spacing: f64,
+    row_spacing: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if columns == 0 || rows == 0 {
+        set_last_error(DWG_EINVAL, "array dimensions must be at least 1");
+        return DWG_EINVAL;
+    }
+    if !finite(column_spacing) || !finite(row_spacing) {
+        set_last_error(DWG_EINVAL, "array spacing must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Insert),
+        move |entity| {
+            let EntityType::Insert(insert) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            insert.column_count = columns;
+            insert.row_count = rows;
+            insert.column_spacing = column_spacing;
+            insert.row_spacing = row_spacing;
+            if columns > 1 || rows > 1 {
+                insert.mark_as_minsert();
+            }
+            Ok(())
+        },
+    )
+}
+
+vec3_setter!(dwg_entity_viewport_set_center, Viewport, Viewport, center);
+f64_setter!(
+    dwg_entity_viewport_set_width,
+    Viewport,
+    Viewport,
+    width,
+    positive
+);
+f64_setter!(
+    dwg_entity_viewport_set_height,
+    Viewport,
+    Viewport,
+    height,
+    positive
+);
+
+f64_setter!(
+    dwg_entity_hatch_set_elevation,
+    Hatch,
+    Hatch,
+    elevation,
+    finite_only
+);
+
+/// Set a HATCH entity's pattern name.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer, `obj` must be a valid HATCH object from that
+/// document, and `value` must point to a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_hatch_set_pattern_name(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    value: *const i8,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    let Ok(value) = read_c_string(value) else {
+        set_last_error(DWG_EINVAL, "value is not valid UTF-8");
+        return DWG_EINVAL;
+    };
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Hatch),
+        move |entity| {
+            let EntityType::Hatch(hatch) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            hatch.pattern.name = value;
+            Ok(())
+        },
+    )
+}
+
+f64_setter!(
+    dwg_entity_hatch_set_pattern_angle,
+    Hatch,
+    Hatch,
+    pattern_angle,
+    finite_only
+);
+f64_setter!(
+    dwg_entity_hatch_set_pattern_scale,
+    Hatch,
+    Hatch,
+    pattern_scale,
+    positive
 );
 
 /// Set a RAY entity's normalized direction vector.
