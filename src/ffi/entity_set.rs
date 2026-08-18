@@ -350,26 +350,14 @@ f64_setter!(
     height,
     positive
 );
-string_setter!(
-    dwg_entity_tolerance_set_text,
-    Tolerance,
-    Tolerance,
-    text,
-    allow_empty
-);
+string_setter!(dwg_entity_tolerance_set_text, Tolerance, Tolerance, text, allow_empty);
 vec3_setter!(
     dwg_entity_tolerance_set_insertion_point,
     Tolerance,
     Tolerance,
     insertion_point
 );
-string_setter!(
-    dwg_entity_mline_set_style_name,
-    MLine,
-    MLine,
-    style_name,
-    allow_empty
-);
+string_setter!(dwg_entity_mline_set_style_name, MLine, MLine, style_name, allow_empty);
 vec3_setter!(dwg_entity_mline_set_start_point, MLine, MLine, start_point);
 f64_setter!(
     dwg_entity_mline_set_scale_factor,
