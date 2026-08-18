@@ -1636,6 +1636,21 @@ fn phase3c_annotation_setters() {
     let shape = find_object_of_type(data, DwgObjectType::Shape as i32);
     assert!(!attrdef.is_null() && !tolerance.is_null() && !mline.is_null() && !shape.is_null());
 
+    let foreign_fixture = write_batch3_dwg("acadrust_ffi_p3c2_annotation_foreign");
+    let mut foreign_data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut foreign_data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(foreign_fixture.c_path().as_ptr(), foreign_data) }, DWG_OK);
+    let foreign_attrdef = find_object_of_type(foreign_data, DwgObjectType::AttributeDefinition as i32);
+    let foreign_tolerance = find_object_of_type(foreign_data, DwgObjectType::Tolerance as i32);
+    let foreign_mline = find_object_of_type(foreign_data, DwgObjectType::MLine as i32);
+    let foreign_shape = find_object_of_type(foreign_data, DwgObjectType::Shape as i32);
+    assert!(
+        !foreign_attrdef.is_null()
+            && !foreign_tolerance.is_null()
+            && !foreign_mline.is_null()
+            && !foreign_shape.is_null()
+    );
+
     let tag = CString::new("P3C_TAG").unwrap();
     let prompt = CString::new("P3C_PROMPT").unwrap();
     let default_value = CString::new("P3C_DEFAULT").unwrap();
@@ -1661,6 +1676,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_attrdef_set_default_value(data, attrdef, std::ptr::null()), DWG_EINVAL, read_string(dwg_entity_attrdef_get_default_value, attrdef), "P3C_DEFAULT");
     assert_failure_preserves!(dwg_entity_attrdef_set_tag(data, attrdef, invalid_utf8.as_ptr().cast()), DWG_EINVAL, read_string(dwg_entity_attrdef_get_tag, attrdef), "P3C_TAG");
     assert_failure_preserves!(dwg_entity_attrdef_set_tag(data, tolerance, tag.as_ptr()), DWG_ETYPE, read_string(dwg_entity_attrdef_get_tag, attrdef), "P3C_TAG");
+    assert_failure_preserves!(dwg_entity_attrdef_set_tag(data, foreign_attrdef, tag.as_ptr()), DWG_ENOTFOUND, read_string(dwg_entity_attrdef_get_tag, attrdef), "P3C_TAG");
     assert_eq!(unsafe { dwg_entity_attrdef_set_tag(data, attrdef, tag.as_ptr()) }, DWG_OK);
     assert_eq!(unsafe { read_string(dwg_entity_attrdef_get_tag, attrdef) }, "P3C_TAG");
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1670,6 +1686,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_attrdef_set_insertion_point(data, std::ptr::null(), 10.0, 11.0, 12.0), DWG_EINVAL, read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef), (10.0, 11.0, 12.0));
     assert_failure_preserves!(dwg_entity_attrdef_set_insertion_point(data, attrdef, f64::NAN, 11.0, 12.0), DWG_EINVAL, read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef), (10.0, 11.0, 12.0));
     assert_failure_preserves!(dwg_entity_attrdef_set_insertion_point(data, tolerance, 10.0, 11.0, 12.0), DWG_ETYPE, read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef), (10.0, 11.0, 12.0));
+    assert_failure_preserves!(dwg_entity_attrdef_set_insertion_point(data, foreign_attrdef, 10.0, 11.0, 12.0), DWG_ENOTFOUND, read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef), (10.0, 11.0, 12.0));
     assert_eq!(unsafe { dwg_entity_attrdef_set_insertion_point(data, attrdef, 10.0, 11.0, 12.0) }, DWG_OK);
     assert_eq!(unsafe { read_vec3(dwg_entity_attrdef_get_insertion_point, attrdef) }, (10.0, 11.0, 12.0));
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1680,6 +1697,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_attrdef_set_height(data, attrdef, 0.0), DWG_EINVAL, read_f64(dwg_entity_attrdef_get_height, attrdef), 3.5);
     assert_failure_preserves!(dwg_entity_attrdef_set_height(data, attrdef, f64::NAN), DWG_EINVAL, read_f64(dwg_entity_attrdef_get_height, attrdef), 3.5);
     assert_failure_preserves!(dwg_entity_attrdef_set_height(data, tolerance, 3.5), DWG_ETYPE, read_f64(dwg_entity_attrdef_get_height, attrdef), 3.5);
+    assert_failure_preserves!(dwg_entity_attrdef_set_height(data, foreign_attrdef, 3.5), DWG_ENOTFOUND, read_f64(dwg_entity_attrdef_get_height, attrdef), 3.5);
     assert_eq!(unsafe { dwg_entity_attrdef_set_height(data, attrdef, 3.5) }, DWG_OK);
     assert_eq!(unsafe { read_f64(dwg_entity_attrdef_get_height, attrdef) }, 3.5);
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1694,6 +1712,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_tolerance_set_text(data, tolerance, std::ptr::null()), DWG_EINVAL, read_string(dwg_entity_tolerance_get_text, tolerance), "P3C_TOL");
     assert_failure_preserves!(dwg_entity_tolerance_set_text(data, tolerance, invalid_utf8.as_ptr().cast()), DWG_EINVAL, read_string(dwg_entity_tolerance_get_text, tolerance), "P3C_TOL");
     assert_failure_preserves!(dwg_entity_tolerance_set_text(data, attrdef, text.as_ptr()), DWG_ETYPE, read_string(dwg_entity_tolerance_get_text, tolerance), "P3C_TOL");
+    assert_failure_preserves!(dwg_entity_tolerance_set_text(data, foreign_tolerance, text.as_ptr()), DWG_ENOTFOUND, read_string(dwg_entity_tolerance_get_text, tolerance), "P3C_TOL");
     assert_eq!(unsafe { dwg_entity_tolerance_set_text(data, tolerance, text.as_ptr()) }, DWG_OK);
     assert_eq!(unsafe { read_string(dwg_entity_tolerance_get_text, tolerance) }, "P3C_TOL");
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1701,6 +1720,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_tolerance_set_insertion_point(data, std::ptr::null(), 20.0, 21.0, 22.0), DWG_EINVAL, read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance), (20.0, 21.0, 22.0));
     assert_failure_preserves!(dwg_entity_tolerance_set_insertion_point(data, tolerance, f64::INFINITY, 21.0, 22.0), DWG_EINVAL, read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance), (20.0, 21.0, 22.0));
     assert_failure_preserves!(dwg_entity_tolerance_set_insertion_point(data, attrdef, 20.0, 21.0, 22.0), DWG_ETYPE, read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance), (20.0, 21.0, 22.0));
+    assert_failure_preserves!(dwg_entity_tolerance_set_insertion_point(data, foreign_tolerance, 20.0, 21.0, 22.0), DWG_ENOTFOUND, read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance), (20.0, 21.0, 22.0));
     assert_eq!(unsafe { dwg_entity_tolerance_set_insertion_point(data, tolerance, 20.0, 21.0, 22.0) }, DWG_OK);
     assert_eq!(unsafe { read_vec3(dwg_entity_tolerance_get_insertion_point, tolerance) }, (20.0, 21.0, 22.0));
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1717,6 +1737,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_mline_set_style_name(data, mline, std::ptr::null()), DWG_EINVAL, read_string(dwg_entity_mline_get_style_name, mline), "P3C_STYLE");
     assert_failure_preserves!(dwg_entity_mline_set_style_name(data, mline, invalid_utf8.as_ptr().cast()), DWG_EINVAL, read_string(dwg_entity_mline_get_style_name, mline), "P3C_STYLE");
     assert_failure_preserves!(dwg_entity_mline_set_style_name(data, shape, style.as_ptr()), DWG_ETYPE, read_string(dwg_entity_mline_get_style_name, mline), "P3C_STYLE");
+    assert_failure_preserves!(dwg_entity_mline_set_style_name(data, foreign_mline, style.as_ptr()), DWG_ENOTFOUND, read_string(dwg_entity_mline_get_style_name, mline), "P3C_STYLE");
     assert_eq!(unsafe { dwg_entity_mline_set_style_name(data, mline, style.as_ptr()) }, DWG_OK);
     assert_eq!(unsafe { read_string(dwg_entity_mline_get_style_name, mline) }, "P3C_STYLE");
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1724,6 +1745,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_mline_set_start_point(data, std::ptr::null(), 30.0, 31.0, 32.0), DWG_EINVAL, read_vec3(dwg_entity_mline_get_start_point, mline), (30.0, 31.0, 32.0));
     assert_failure_preserves!(dwg_entity_mline_set_start_point(data, mline, 30.0, f64::NAN, 32.0), DWG_EINVAL, read_vec3(dwg_entity_mline_get_start_point, mline), (30.0, 31.0, 32.0));
     assert_failure_preserves!(dwg_entity_mline_set_start_point(data, shape, 30.0, 31.0, 32.0), DWG_ETYPE, read_vec3(dwg_entity_mline_get_start_point, mline), (30.0, 31.0, 32.0));
+    assert_failure_preserves!(dwg_entity_mline_set_start_point(data, foreign_mline, 30.0, 31.0, 32.0), DWG_ENOTFOUND, read_vec3(dwg_entity_mline_get_start_point, mline), (30.0, 31.0, 32.0));
     assert_eq!(unsafe { dwg_entity_mline_set_start_point(data, mline, 30.0, 31.0, 32.0) }, DWG_OK);
     assert_eq!(unsafe { read_vec3(dwg_entity_mline_get_start_point, mline) }, (30.0, 31.0, 32.0));
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1732,6 +1754,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_mline_set_scale_factor(data, mline, 0.0), DWG_EINVAL, read_f64(dwg_entity_mline_get_scale_factor, mline), 1.75);
     assert_failure_preserves!(dwg_entity_mline_set_scale_factor(data, mline, f64::NAN), DWG_EINVAL, read_f64(dwg_entity_mline_get_scale_factor, mline), 1.75);
     assert_failure_preserves!(dwg_entity_mline_set_scale_factor(data, shape, 1.75), DWG_ETYPE, read_f64(dwg_entity_mline_get_scale_factor, mline), 1.75);
+    assert_failure_preserves!(dwg_entity_mline_set_scale_factor(data, foreign_mline, 1.75), DWG_ENOTFOUND, read_f64(dwg_entity_mline_get_scale_factor, mline), 1.75);
     assert_eq!(unsafe { dwg_entity_mline_set_scale_factor(data, mline, 1.75) }, DWG_OK);
     assert_eq!(unsafe { read_f64(dwg_entity_mline_get_scale_factor, mline) }, 1.75);
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1747,6 +1770,7 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_shape_set_insertion_point(data, std::ptr::null(), 40.0, 41.0, 42.0), DWG_EINVAL, read_vec3(dwg_entity_shape_get_insertion_point, shape), (40.0, 41.0, 42.0));
     assert_failure_preserves!(dwg_entity_shape_set_insertion_point(data, shape, 40.0, f64::INFINITY, 42.0), DWG_EINVAL, read_vec3(dwg_entity_shape_get_insertion_point, shape), (40.0, 41.0, 42.0));
     assert_failure_preserves!(dwg_entity_shape_set_insertion_point(data, tolerance, 40.0, 41.0, 42.0), DWG_ETYPE, read_vec3(dwg_entity_shape_get_insertion_point, shape), (40.0, 41.0, 42.0));
+    assert_failure_preserves!(dwg_entity_shape_set_insertion_point(data, foreign_shape, 40.0, 41.0, 42.0), DWG_ENOTFOUND, read_vec3(dwg_entity_shape_get_insertion_point, shape), (40.0, 41.0, 42.0));
     assert_eq!(unsafe { dwg_entity_shape_set_insertion_point(data, shape, 40.0, 41.0, 42.0) }, DWG_OK);
     assert_eq!(unsafe { read_vec3(dwg_entity_shape_get_insertion_point, shape) }, (40.0, 41.0, 42.0));
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
@@ -1755,15 +1779,11 @@ fn phase3c_annotation_setters() {
     assert_failure_preserves!(dwg_entity_shape_set_size(data, shape, 0.0), DWG_EINVAL, read_f64(dwg_entity_shape_get_size, shape), 2.5);
     assert_failure_preserves!(dwg_entity_shape_set_size(data, shape, f64::NAN), DWG_EINVAL, read_f64(dwg_entity_shape_get_size, shape), 2.5);
     assert_failure_preserves!(dwg_entity_shape_set_size(data, tolerance, 2.5), DWG_ETYPE, read_f64(dwg_entity_shape_get_size, shape), 2.5);
+    assert_failure_preserves!(dwg_entity_shape_set_size(data, foreign_shape, 2.5), DWG_ENOTFOUND, read_f64(dwg_entity_shape_get_size, shape), 2.5);
     assert_eq!(unsafe { dwg_entity_shape_set_size(data, shape, 2.5) }, DWG_OK);
     assert_eq!(unsafe { read_f64(dwg_entity_shape_get_size, shape) }, 2.5);
     assert_eq!(unsafe { dwg_last_error_code() }, DWG_OK);
 
-    let foreign_fixture = write_batch3_dwg("acadrust_ffi_p3c2_annotation_foreign");
-    let mut foreign_data: *mut DwgData = std::ptr::null_mut();
-    assert_eq!(unsafe { dwg_data_create(&mut foreign_data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(foreign_fixture.c_path().as_ptr(), foreign_data) }, DWG_OK);
-    let foreign_shape = find_object_of_type(foreign_data, DwgObjectType::Shape as i32);
     assert_failure_preserves!(dwg_entity_shape_set_rotation(std::ptr::null_mut(), shape, 0.5), DWG_EINVAL, read_f64(dwg_entity_shape_get_rotation, shape), 0.5);
     assert_failure_preserves!(dwg_entity_shape_set_rotation(data, std::ptr::null(), 0.5), DWG_EINVAL, read_f64(dwg_entity_shape_get_rotation, shape), 0.5);
     assert_failure_preserves!(dwg_entity_shape_set_rotation(data, shape, f64::INFINITY), DWG_EINVAL, read_f64(dwg_entity_shape_get_rotation, shape), 0.5);
