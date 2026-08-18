@@ -919,6 +919,145 @@ fn phase3c_text_setters() {
         2.25
     );
 
+    assert_eq!(
+        unsafe { dwg_entity_text_set_value(std::ptr::null_mut(), text, text_value.as_ptr()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_text_get_value, text) },
+        "P3C TEXT"
+    );
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_value(mtext_data, std::ptr::null(), mtext_value.as_ptr()) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_string(dwg_entity_mtext_get_value, mtext) },
+        "P3C\\PMTEXT"
+    );
+
+    assert_eq!(
+        unsafe {
+            dwg_entity_text_set_insertion_point(
+                text_data,
+                std::ptr::null(),
+                8.0,
+                9.0,
+                10.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_text_get_insertion_point, text) },
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(
+        unsafe {
+            dwg_entity_mtext_set_insertion_point(
+                std::ptr::null_mut(),
+                mtext,
+                8.0,
+                9.0,
+                10.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_mtext_get_insertion_point, mtext) },
+        (5.0, 6.0, 7.0)
+    );
+
+    assert_eq!(
+        unsafe { dwg_entity_text_set_height(text_data, std::ptr::null(), 6.0) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(unsafe { read_f64(dwg_entity_text_get_height, text) }, 4.0);
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_height(std::ptr::null_mut(), mtext, 3.0) },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_f64(dwg_entity_mtext_get_height, mtext) },
+        2.25
+    );
+
+    assert_eq!(
+        unsafe {
+            dwg_entity_text_set_insertion_point(
+                text_data,
+                text,
+                f64::NAN,
+                2.0,
+                3.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_text_get_insertion_point, text) },
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(
+        unsafe {
+            dwg_entity_text_set_insertion_point(
+                text_data,
+                text,
+                1.0,
+                f64::INFINITY,
+                3.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_text_get_insertion_point, text) },
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(
+        unsafe {
+            dwg_entity_mtext_set_insertion_point(
+                mtext_data,
+                mtext,
+                f64::NAN,
+                6.0,
+                7.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_mtext_get_insertion_point, mtext) },
+        (5.0, 6.0, 7.0)
+    );
+    assert_eq!(
+        unsafe {
+            dwg_entity_mtext_set_insertion_point(
+                mtext_data,
+                mtext,
+                5.0,
+                f64::INFINITY,
+                7.0,
+            )
+        },
+        DWG_EINVAL
+    );
+    assert_last_error(DWG_EINVAL);
+    assert_eq!(
+        unsafe { read_vec3(dwg_entity_mtext_get_insertion_point, mtext) },
+        (5.0, 6.0, 7.0)
+    );
+
     let empty = CString::new("").unwrap();
     assert_eq!(
         unsafe { dwg_entity_text_set_value(text_data, text, empty.as_ptr()) },
@@ -1010,6 +1149,26 @@ fn phase3c_text_setters() {
     assert_last_error(DWG_ENOTFOUND);
     assert_eq!(unsafe { read_f64(dwg_entity_text_get_height, text) }, 4.0);
 
+    let (foreign_mtext_path, foreign_mtext_path_buf) =
+        write_batch1_dwg("acadrust_ffi_p3c2_text_foreign");
+    let mut foreign_mtext_data: *mut DwgData = std::ptr::null_mut();
+    assert_eq!(unsafe { dwg_data_create(&mut foreign_mtext_data) }, DWG_OK);
+    assert_eq!(
+        unsafe { dwg_read_file(foreign_mtext_path.as_ptr(), foreign_mtext_data) },
+        DWG_OK
+    );
+    let foreign_mtext = find_object_of_type(foreign_mtext_data, DwgObjectType::MText as i32);
+    assert!(!foreign_mtext.is_null());
+    assert_eq!(
+        unsafe { dwg_entity_mtext_set_height(mtext_data, foreign_mtext, 3.25) },
+        DWG_ENOTFOUND
+    );
+    assert_last_error(DWG_ENOTFOUND);
+    assert_eq!(
+        unsafe { read_f64(dwg_entity_mtext_get_height, mtext) },
+        2.25
+    );
+
     assert_eq!(
         unsafe { dwg_entity_text_set_value(text_data, text, text_value.as_ptr()) },
         DWG_OK
@@ -1021,7 +1180,15 @@ fn phase3c_text_setters() {
     assert_eq!(dwg_last_error_code(), DWG_OK);
 
     unsafe { dwg_data_destroy(foreign_data) };
+    unsafe { dwg_data_destroy(foreign_mtext_data) };
     unsafe { dwg_data_destroy(mtext_data) };
+    let foreign_mtext_dir = foreign_mtext_path_buf
+        .parent()
+        .map(|path| path.to_path_buf());
+    let _ = std::fs::remove_file(foreign_mtext_path_buf);
+    if let Some(foreign_mtext_dir) = foreign_mtext_dir {
+        let _ = std::fs::remove_dir(foreign_mtext_dir);
+    }
     let mtext_dir = mtext_path_buf.parent().map(|path| path.to_path_buf());
     let _ = std::fs::remove_file(mtext_path_buf);
     if let Some(mtext_dir) = mtext_dir {
