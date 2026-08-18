@@ -28,9 +28,32 @@ fn ffi_dll() -> Option<std::path::PathBuf> {
         .find(|p| p.exists())
 }
 
-/// Build a temp DWG containing Line, Circle and Text via the Rust API, then
-/// return its path (caller deletes it).
-fn write_sample_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
+/// A uniquely named sample DWG and its uniquely named parent directory.
+struct SampleDwgFixture {
+    path: std::path::PathBuf,
+    c_path: CString,
+    dir: std::path::PathBuf,
+}
+
+impl SampleDwgFixture {
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn c_path(&self) -> &std::ffi::CStr {
+        &self.c_path
+    }
+}
+
+impl Drop for SampleDwgFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+/// Build a temp DWG containing Line, Circle and Text via the Rust API.
+fn write_sample_dwg(dir_name: &str) -> SampleDwgFixture {
     use acadrust::entities::{Circle, Line, Text};
     use acadrust::types::Vector3;
     use acadrust::{CadDocument, DwgWriter, EntityType};
@@ -48,16 +71,28 @@ fn write_sample_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     t.height = 1.0;
     doc.add_entity(EntityType::Text(t)).unwrap();
     DwgWriter::write_to_file(&path, &doc).unwrap();
-    (CString::new(path.to_str().unwrap()).unwrap(), path)
+    SampleDwgFixture {
+        c_path: CString::new(path.to_str().unwrap()).unwrap(),
+        path,
+        dir,
+    }
 }
 
 #[test]
 fn sample_dwg_paths_are_unique_per_invocation() {
-    let (_, first) = write_sample_dwg("acadrust_ffi_unique_fixture");
-    let (_, second) = write_sample_dwg("acadrust_ffi_unique_fixture");
-    assert_ne!(first, second);
-    let _ = std::fs::remove_file(first);
-    let _ = std::fs::remove_file(second);
+    let first = write_sample_dwg("acadrust_ffi_unique_fixture");
+    let second = write_sample_dwg("acadrust_ffi_unique_fixture");
+    assert_ne!(first.path(), second.path());
+}
+
+#[test]
+fn sample_dwg_fixture_cleanup_removes_its_parent_directory() {
+    let fixture = write_sample_dwg("acadrust_ffi_cleanup_fixture");
+    let parent = fixture.path().parent().unwrap().to_path_buf();
+
+    drop(fixture);
+
+    assert!(!parent.exists());
 }
 
 #[test]
@@ -294,8 +329,8 @@ fn c_entity_set_basic_compiles_links_and_runs() {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let dll = ffi_dll()
         .expect("acadrust.dll not found; build the release ffi cdylib before running this test");
-    let (fixture, fixture_path) = write_sample_dwg("acadrust_c_entity_set_basic");
-    let out_dir = fixture_path.parent().unwrap();
+    let fixture = write_sample_dwg("acadrust_c_entity_set_basic");
+    let out_dir = fixture.path().parent().unwrap();
     let exe = out_dir.join("c_entity_set_basic.exe");
     let src = std::path::Path::new(manifest).join("tests/ffi/c_entity_set_basic.c");
 
@@ -321,7 +356,7 @@ fn c_entity_set_basic_compiles_links_and_runs() {
         );
 
         let output = std::process::Command::new(&exe)
-            .arg(fixture.as_c_str().to_str().unwrap())
+            .arg(fixture.c_path().to_str().unwrap())
             .output()
             .map_err(|error| format!("failed to run c_entity_set_basic: {error}"))?;
         if !output.status.success() {
@@ -339,9 +374,7 @@ fn c_entity_set_basic_compiles_links_and_runs() {
         Ok(())
     })();
 
-    let _ = std::fs::remove_file(&fixture_path);
     let _ = std::fs::remove_file(&exe);
-    let _ = std::fs::remove_dir(out_dir);
     result.unwrap_or_else(|message| panic!("{message}"));
 }
 
@@ -418,10 +451,10 @@ fn c_entities_value_smoke() {
 
 #[test]
 fn iterate_sample_document_via_abi() {
-    let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_iter");
+    let fixture = write_sample_dwg("acadrust_ffi_p2_iter");
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
+    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
 
     let mut err = 0;
     let mut obj = unsafe { dwg_data_first_object(data, &mut err) };
@@ -445,7 +478,6 @@ fn iterate_sample_document_via_abi() {
     );
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(&path_buf);
 }
 
 #[test]
@@ -462,17 +494,17 @@ fn fresh_document_object_graph_has_default_objects() {
     unsafe { dwg_data_destroy(data) };
 }
 
-fn open_sample_document() -> (*mut DwgData, std::path::PathBuf) {
-    let (path, path_buf) = write_sample_dwg("acadrust_ffi_p2_entity");
+fn open_sample_document() -> (*mut DwgData, SampleDwgFixture) {
+    let fixture = write_sample_dwg("acadrust_ffi_p2_entity");
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(path.as_ptr(), data) }, DWG_OK);
-    (data, path_buf)
+    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
+    (data, fixture)
 }
 
 #[test]
 fn line_and_circle_getters_return_values() {
-    let (data, path_buf) = open_sample_document();
+    let (data, _fixture) = open_sample_document();
     let mut err = 0;
     let line = unsafe { dwg_data_first_object(data, &mut err) };
     assert_eq!(err, DWG_OK);
@@ -498,12 +530,11 @@ fn line_and_circle_getters_return_values() {
     assert_eq!(rc, DWG_ETYPE);
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(&path_buf);
 }
 
 #[test]
 fn text_getter_reads_value_with_buffer_protocol() {
-    let (data, path_buf) = open_sample_document();
+    let (data, _fixture) = open_sample_document();
     let mut err = 0;
     let mut obj = unsafe { dwg_data_first_object(data, &mut err) };
     // Walk to the TEXT entity.
@@ -530,7 +561,6 @@ fn text_getter_reads_value_with_buffer_protocol() {
     assert!((h - 1.0).abs() < 1e-9);
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(&path_buf);
 }
 
 #[test]
@@ -680,7 +710,7 @@ fn find_object_of_type(data: *mut DwgData, want: i32) -> *const DwgObject {
 
 #[test]
 fn common_entity_setters_roundtrip_through_getters() {
-    let (data, path) = open_sample_document();
+    let (data, _fixture) = open_sample_document();
     let line = find_object_of_type(data, DwgObjectType::Line as i32);
     assert!(!line.is_null());
     let layer = CString::new("P3C_LAYER").unwrap();
@@ -710,12 +740,11 @@ fn common_entity_setters_roundtrip_through_getters() {
     assert_eq!(scale, 2.5);
 
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn common_entity_setters_reject_invalid_inputs_without_corruption() {
-    let (data, path) = open_sample_document();
+    let (data, _fixture) = open_sample_document();
     let line = find_object_of_type(data, DwgObjectType::Line as i32);
     let stable_layer = CString::new("P3C_STABLE_LAYER").unwrap();
     let stable_linetype = CString::new("CONTINUOUS").unwrap();
@@ -735,10 +764,17 @@ fn common_entity_setters_reject_invalid_inputs_without_corruption() {
     assert_eq!(unsafe { dwg_entity_set_layer(data, line, empty_linetype.as_ptr()) }, DWG_EINVAL);
     let invalid_utf8 = [0xff_u8, 0];
     assert_eq!(unsafe { dwg_entity_set_linetype(data, line, invalid_utf8.as_ptr().cast()) }, DWG_EINVAL);
+    let mut linetype_needed = 0;
+    assert_eq!(unsafe { dwg_entity_get_linetype(line, std::ptr::null_mut(), 0, &mut linetype_needed) }, DWG_OK);
+    let mut linetype_buf = vec![0_i8; linetype_needed];
+    assert_eq!(unsafe {
+        dwg_entity_get_linetype(line, linetype_buf.as_mut_ptr(), linetype_buf.len(), &mut linetype_needed)
+    }, DWG_OK);
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(linetype_buf.as_ptr()) }.to_str().unwrap(), "CONTINUOUS");
     assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, f64::NAN) }, DWG_EINVAL);
     assert_eq!(unsafe { dwg_entity_set_linetype_scale(data, line, 0.0) }, DWG_EINVAL);
 
-    let (foreign_data, foreign_path) = open_sample_document();
+    let (foreign_data, _foreign_fixture) = open_sample_document();
     let foreign_line = find_object_of_type(foreign_data, DwgObjectType::Line as i32);
     assert_eq!(unsafe { dwg_entity_set_color(data, foreign_line, 0x00ABCDEF) }, DWG_ENOTFOUND);
 
@@ -756,8 +792,6 @@ fn common_entity_setters_reject_invalid_inputs_without_corruption() {
 
     unsafe { dwg_data_destroy(foreign_data) };
     unsafe { dwg_data_destroy(data) };
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_file(foreign_path);
 }
 
 unsafe fn read_vec3(
