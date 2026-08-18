@@ -1824,7 +1824,10 @@ fn phase3c_insert_viewport_hatch_setters() {
     let fixture = write_batch2_dwg("acadrust_ffi_p3c2_insert_viewport");
     let mut data: *mut DwgData = std::ptr::null_mut();
     assert_eq!(unsafe { dwg_data_create(&mut data) }, DWG_OK);
-    assert_eq!(unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) }, DWG_OK);
+    assert_eq!(
+        unsafe { dwg_read_file(fixture.c_path().as_ptr(), data) },
+        DWG_OK
+    );
     let insert = find_object_of_type(data, DwgObjectType::Insert as i32);
     let viewport = find_object_of_type(data, DwgObjectType::Viewport as i32);
     assert!(!insert.is_null() && !viewport.is_null());
@@ -1900,7 +1903,6 @@ fn phase3c_insert_viewport_hatch_setters() {
         "P3C_BLOCK"
     );
     assert_failure_preserves!(
-
         dwg_entity_insert_set_block_name(data, insert, empty.as_ptr()),
         DWG_EINVAL,
         read_string(dwg_entity_insert_get_block_name, insert),
@@ -1951,7 +1953,6 @@ fn phase3c_insert_viewport_hatch_setters() {
     assert_failure_preserves!(
         dwg_entity_insert_set_insert_point(data, insert, f64::NAN, 2.0, 3.0),
         DWG_EINVAL,
-
         read_vec3(dwg_entity_insert_get_insert_point, insert),
         (1.0, 2.0, 3.0)
     );
@@ -2002,7 +2003,6 @@ fn phase3c_insert_viewport_hatch_setters() {
         DWG_EINVAL,
         read_f64(dwg_entity_insert_get_rotation, insert),
         0.75
-
     );
     assert_failure_preserves!(
         dwg_entity_insert_set_rotation(data, viewport, 0.75),
@@ -2053,7 +2053,6 @@ fn phase3c_insert_viewport_hatch_setters() {
         (0.6, 0.8, 0.0)
     );
     assert_failure_preserves!(
-
         dwg_entity_insert_set_normal(data, insert, f64::INFINITY, 4.0, 0.0),
         DWG_EINVAL,
         read_vec3(dwg_entity_insert_get_normal, insert),
@@ -2155,7 +2154,6 @@ fn phase3c_insert_viewport_hatch_setters() {
         DWG_EINVAL,
         read_vec3(dwg_entity_viewport_get_center, viewport),
         (4.0, 5.0, 6.0)
-
     );
     assert_failure_preserves!(
         dwg_entity_viewport_set_center(data, std::ptr::null(), 4.0, 5.0, 6.0),
