@@ -3,6 +3,7 @@
  * Usage: c_entity_set_fixed <fixture.dwg>
  */
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 typedef struct DwgData DwgData;
@@ -28,11 +29,11 @@ extern int dwg_entity_text_set_value(DwgData *data, const DwgObject *obj,
 extern int dwg_entity_text_get_value(const DwgObject *obj, char *buf,
                                      size_t cap, size_t *needed);
 extern int dwg_entity_insert_set_array(DwgData *data, const DwgObject *obj,
-                                       int columns, int rows,
+                                       uint16_t columns, uint16_t rows,
                                        double column_spacing,
                                        double row_spacing);
-extern int dwg_entity_insert_get_array(const DwgObject *obj, int *columns,
-                                       int *rows);
+extern int dwg_entity_insert_get_array(const DwgObject *obj,
+                                       uint16_t *columns, uint16_t *rows);
 extern int dwg_entity_dimension_set_style_name(DwgData *data,
                                                const DwgObject *obj,
                                                const char *value);
@@ -55,8 +56,8 @@ int main(int argc, char **argv) {
   int exit_code = 0;
   char buf[64];
   size_t needed = 0;
-  int columns = 0;
-  int rows = 0;
+  uint16_t columns = 0;
+  uint16_t rows = 0;
   double width = 0.0;
   double height = 0.0;
 
