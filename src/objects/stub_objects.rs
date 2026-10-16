@@ -720,10 +720,17 @@ mod tests {
     }
 
     #[test]
-    fn core_properties_uses_correct_legacy_mapping() {
-        let legacy = sample_legacy();
+    fn core_properties_follows_r2010_legacy_mapping() {
+        let mut legacy = sample_legacy();
+        // Distinctive values, so every asserted slot proves the mapping ran
+        // instead of coinciding with an untouched default.
+        legacy[6] = legacy_prop(VisualStylePropertyValue::Short(6)); // edge_intersection_ltype
+        legacy[19] = legacy_prop(VisualStylePropertyValue::Short(9)); // display_settings
+        legacy[20] = legacy_prop(VisualStylePropertyValue::Long(20)); // display_brightness
+        legacy[21] = legacy_prop(VisualStylePropertyValue::Long(21)); // display_shadow_type
+        legacy[22] = legacy_prop(VisualStylePropertyValue::Long(22)); // acad app data
         let mut vs = VisualStyle::new();
-        vs.properties = legacy.clone();
+        vs.properties = legacy;
         vs.face_lighting_model = 0;
         vs.face_lighting_quality = 2;
         vs.face_color_mode = 1;
@@ -732,13 +739,18 @@ mod tests {
         vs.edge_style = 4;
         let core = vs.core_properties();
         assert_eq!(core.len(), 28);
-        // The previously-mis-mapped slot (modern 12) must be edge_intersection_ltype,
-        // not display_settings.
-        assert_eq!(core[12], legacy[6]);
-        assert_eq!(core[13], legacy[7]);
-        assert_eq!(core[25], legacy[19]);
-        assert_eq!(core[26], legacy[20]);
-        assert_eq!(core[27], legacy[21]);
+        // R2010+ order: legacy display_settings takes modern slot 12, which
+        // shifts edge_intersection_ltype to 13 and keeps the legacy tail
+        // order. Values take the modern slot's type, so the legacy brightness
+        // long becomes the modern double.
+        assert_eq!(core[12], legacy_prop(VisualStylePropertyValue::Long(9)));
+        assert_eq!(core[13], legacy_prop(VisualStylePropertyValue::Double(6.0)));
+        assert_eq!(core[25], legacy_prop(VisualStylePropertyValue::Long(20)));
+        assert_eq!(
+            core[26],
+            legacy_prop(VisualStylePropertyValue::Double(21.0))
+        );
+        assert_eq!(core[27], legacy_prop(VisualStylePropertyValue::Long(22)));
     }
 }
 
