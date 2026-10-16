@@ -86,22 +86,22 @@ pub const OBJ_DUMMY: i16 = 75;
 pub const OBJ_LONG_TRANSACTION: i16 = 76;
 
 // Standard table-type fixed codes (77+)
-pub const OBJ_LWPOLYLINE: i16 = 77;    // standard fixed type in R14+
-pub const OBJ_HATCH: i16 = 78;         // standard fixed type
+pub const OBJ_LWPOLYLINE: i16 = 77; // standard fixed type in R14+
+pub const OBJ_HATCH: i16 = 78; // standard fixed type
 
 // Class-based (UNLISTED) entity types.
 // These must ALWAYS be resolved via class_type_code(), never used directly.
 // The values below are just fallbacks — never valid as fixed type codes.
-pub const OBJ_IMAGE: i16 = -1;         // UNLISTED: always use class number
-pub const OBJ_MESH: i16 = -2;          // UNLISTED: always use class number
-pub const OBJ_MULTILEADER: i16 = -3;   // UNLISTED: always use class number
-pub const OBJ_SURFACE: i16 = -5;       // UNLISTED: ACAD_SURFACE family
-pub const OBJ_PDFUNDERLAY: i16 = -12;  // UNLISTED: always use class number
-pub const OBJ_DWFUNDERLAY: i16 = -13;  // UNLISTED: always use class number
-pub const OBJ_DGNUNDERLAY: i16 = -14;  // UNLISTED: always use class number
-pub const OBJ_HELIX: i16 = -15;        // UNLISTED: always use class number
-pub const OBJ_TABLE: i16 = -16;        // UNLISTED: always use class number
-pub const OBJ_LIGHT: i16 = -17;        // UNLISTED: always use class number
+pub const OBJ_IMAGE: i16 = -1; // UNLISTED: always use class number
+pub const OBJ_MESH: i16 = -2; // UNLISTED: always use class number
+pub const OBJ_MULTILEADER: i16 = -3; // UNLISTED: always use class number
+pub const OBJ_SURFACE: i16 = -5; // UNLISTED: ACAD_SURFACE family
+pub const OBJ_PDFUNDERLAY: i16 = -12; // UNLISTED: always use class number
+pub const OBJ_DWFUNDERLAY: i16 = -13; // UNLISTED: always use class number
+pub const OBJ_DGNUNDERLAY: i16 = -14; // UNLISTED: always use class number
+pub const OBJ_HELIX: i16 = -15; // UNLISTED: always use class number
+pub const OBJ_TABLE: i16 = -16; // UNLISTED: always use class number
+pub const OBJ_LIGHT: i16 = -17; // UNLISTED: always use class number
 pub const OBJ_ARC_DIMENSION: i16 = -18;
 pub const OBJ_LARGE_RADIAL_DIMENSION: i16 = -19;
 pub const OBJ_CAMERA: i16 = -20;
@@ -118,30 +118,30 @@ pub const OBJ_PROXY_OBJECT: i16 = 499;
 pub const OBJ_BLOCKVISIBILITYPARAMETER: i16 = 0x84;
 
 // Fixed-type non-graphical objects (standard type codes from ODA spec)
-pub const OBJ_XRECORD: i16 = 79;        // 0x4F
-pub const OBJ_PLACEHOLDER: i16 = 80;    // 0x50
-pub const OBJ_LAYOUT: i16 = 82;         // 0x52 (R2004+; for R2004Pre use class number)
+pub const OBJ_XRECORD: i16 = 79; // 0x4F
+pub const OBJ_PLACEHOLDER: i16 = 80; // 0x50
+pub const OBJ_LAYOUT: i16 = 82; // 0x52 (R2004+; for R2004Pre use class number)
 
 // Class-based (variable) non-graphical objects:
 // These are UNLISTED in C# — for R2004+ the standard type code works,
 // but for pre-R2004 they should use the DXF class number.
 // We use the ODA-documented type codes that work for R2004+.
-pub const OBJ_DICTIONARYWDFLT: i16 = 0x78;  // 120 (class-based)
-pub const OBJ_DICTIONARYVAR: i16 = 0x79;    // 121
-pub const OBJ_PLOTSETTINGS: i16 = 0x7A;     // 122
-pub const OBJ_MLEADERSTYLE: i16 = 0x7B;     // 123
-pub const OBJ_IMAGEDEF: i16 = 0x7C;         // 124
-pub const OBJ_IMAGEDEFREACTOR: i16 = 0x7D;  // 125
-pub const OBJ_SCALE: i16 = 0x7E;            // 126
-pub const OBJ_SORTENTSTABLE: i16 = 0x7F;    // 127
-pub const OBJ_RASTERVARIABLES: i16 = 0x80;  // 128
-pub const OBJ_DBCOLOR: i16 = 0x81;          // 129
+pub const OBJ_DICTIONARYWDFLT: i16 = 0x78; // 120 (class-based)
+pub const OBJ_DICTIONARYVAR: i16 = 0x79; // 121
+pub const OBJ_PLOTSETTINGS: i16 = 0x7A; // 122
+pub const OBJ_MLEADERSTYLE: i16 = 0x7B; // 123
+pub const OBJ_IMAGEDEF: i16 = 0x7C; // 124
+pub const OBJ_IMAGEDEFREACTOR: i16 = 0x7D; // 125
+pub const OBJ_SCALE: i16 = 0x7E; // 126
+pub const OBJ_SORTENTSTABLE: i16 = 0x7F; // 127
+pub const OBJ_RASTERVARIABLES: i16 = 0x80; // 128
+pub const OBJ_DBCOLOR: i16 = 0x81; // 129
 pub const OBJ_WIPEOUTVARIABLES: i16 = 0x82; // 130
-pub const OBJ_GEODATA: i16 = 0x83;          // 131 (class-based; sentinel fallback)
-pub const OBJ_SPATIALFILTER: i16 = 0x86;    // 134 (class-based; sentinel fallback)
-pub const OBJ_PDFDEFINITION: i16 = 0x87;    // 135 (class-based; sentinel fallback)
-pub const OBJ_DWFDEFINITION: i16 = 0x88;    // 136 (class-based; sentinel fallback)
-pub const OBJ_DGNDEFINITION: i16 = 0x89;    // 137 (class-based; sentinel fallback)
+pub const OBJ_GEODATA: i16 = 0x83; // 131 (class-based; sentinel fallback)
+pub const OBJ_SPATIALFILTER: i16 = 0x86; // 134 (class-based; sentinel fallback)
+pub const OBJ_PDFDEFINITION: i16 = 0x87; // 135 (class-based; sentinel fallback)
+pub const OBJ_DWFDEFINITION: i16 = 0x88; // 136 (class-based; sentinel fallback)
+pub const OBJ_DGNDEFINITION: i16 = 0x89; // 137 (class-based; sentinel fallback)
 
 // ── Methods on DwgObjectWriter ──────────────────────────────────────
 impl<'a> DwgObjectWriter<'a> {
@@ -169,6 +169,7 @@ impl<'a> DwgObjectWriter<'a> {
         // hard integrity error AutoCAD's audit rejects.
         if !handle.is_null() && !self.registered_handles.insert(handle.value()) {
             self.writer.reset();
+            self.pending_type_code = None;
             return;
         }
 
@@ -234,6 +235,10 @@ impl<'a> DwgObjectWriter<'a> {
             self.handle_map.push((handle.value(), pos));
         }
 
+        if let Some(type_code) = self.pending_type_code.take().filter(|code| *code >= 500) {
+            *self.class_instance_counts.entry(type_code).or_default() += 1;
+        }
+
         // 6. Reset per-object writer for the next object
         self.writer.reset();
     }
@@ -245,6 +250,7 @@ impl<'a> DwgObjectWriter<'a> {
     /// that was between `[ModularShort(size)]` and `[CRC16]` in the
     /// original file.  We re-frame it with a fresh MS prefix and CRC.
     pub fn register_raw_object(&mut self, handle: Handle, raw_data: &[u8], handle_bits: i64) {
+        self.class_counts_complete = false;
         // Duplicate-handle guard (see register_object).
         if !handle.is_null() && !self.registered_handles.insert(handle.value()) {
             return;
@@ -283,6 +289,7 @@ impl<'a> DwgObjectWriter<'a> {
         handle: Handle,
         xdata: &crate::xdata::ExtendedData,
     ) {
+        self.pending_type_code = Some(type_code);
         // Object type (BS or MC depending on version)
         self.writer.write_object_type(type_code);
 
@@ -292,10 +299,33 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // Handle (absolute)
-        self.writer.main_mut().write_handle_undefined(handle.value());
+        self.writer
+            .main_mut()
+            .write_handle_undefined(handle.value());
 
         // Extended data
         self.write_extended_data(xdata);
+    }
+
+    /// Resolve an entity's layer name to the handle to write.
+    ///
+    /// An entity's layer is a *required* hard pointer: a NULL value leaves an
+    /// invalid drawing (issue #80). A name can
+    /// fail to resolve when the caller set `common.layer` to a layer that was
+    /// never added, or renamed a layer in place so the entities still carry the
+    /// old name. Fall back to layer "0", which every drawing has and which
+    /// cannot be renamed or deleted, so the reference stays resolvable.
+    fn entity_layer_handle(&self, layer: &str) -> Handle {
+        if let Some(entry) = self.document.layers.get(layer) {
+            if !entry.handle.is_null() {
+                return entry.handle;
+            }
+        }
+        self.document
+            .layers
+            .get("0")
+            .map(|entry| entry.handle)
+            .unwrap_or(Handle::NULL)
     }
 
     // ── write_common_entity_data ────────────────────────────────────
@@ -382,8 +412,8 @@ impl<'a> DwgObjectWriter<'a> {
         // is present in the document but dropped on this save (e.g. an AEC/
         // version-locked object) would leave a dangling handle that AutoCAD's
         // reader rejects (the object reads as improperly read / erased).
-        let effective_entity_xdic = xdictionary_handle
-            .filter(|xdic| !xdic.is_null() && self.is_writable_object(xdic));
+        let effective_entity_xdic =
+            xdictionary_handle.filter(|xdic| !xdic.is_null() && self.is_writable_object(xdic));
 
         // R2004+: no-xdic flag (MAIN) + conditional xdic handle (HANDLE)
         // Pre-R2004: always write xdic handle (0 if none)
@@ -396,9 +426,7 @@ impl<'a> DwgObjectWriter<'a> {
             }
         } else {
             // Pre-R2004: always write xdic handle (0 if none)
-            let xdic_val = effective_entity_xdic
-                .map(|h| h.value())
-                .unwrap_or(0);
+            let xdic_val = effective_entity_xdic.map(|h| h.value()).unwrap_or(0);
             self.writer
                 .write_handle(DwgReferenceType::HardOwnership, xdic_val);
         }
@@ -410,22 +438,9 @@ impl<'a> DwgObjectWriter<'a> {
             }
         }
 
-        // R2013+: `has_ds_data` flag (MAIN) — true only for a modeler entity
-        // whose geometry is emitted as a SAB blob into the AcDs section, so a
-        // reader knows to pull its geometry from there. Set by the modeler
-        // writer just before this call; consumed and cleared here so every
-        // other entity writes false.
-        //
-        // Mirror the reader (see read_common_entity_data): write it for R2013+
-        // as the spec — and ACadSharp / LibreDWG — do, except for MULTILEADER,
-        // which the reader skips because some writers omit it there. It was once
-        // skipped for every preview-bearing entity instead; that mis-modelled
-        // the format and desynced IMAGE / WIPEOUT (evidence in the reader).
-        //
-        // MULTILEADER is class-based, so its type code is per-file: resolve it
-        // rather than comparing against the OBJ_MULTILEADER placeholder.
-        let is_multileader = type_code == self.class_type_code("MULTILEADER", OBJ_MULTILEADER);
-        if self.version.r2013_plus(self.dxf_version) && !is_multileader {
+        // R2013+: the data-store flag is present in every entity header. The
+        // modeler writer sets it immediately before this call.
+        if self.version.r2013_plus(self.dxf_version) {
             let has_ds = self.pending_has_ds_data;
             self.writer.write_bit(has_ds);
         }
@@ -434,12 +449,7 @@ impl<'a> DwgObjectWriter<'a> {
         // ── R13-R14 only: layer + linetype ──
         if self.version.r13_14_only() {
             // Layer handle (HANDLE: hard pointer)
-            let layer_h = self
-                .document
-                .layers
-                .get(layer)
-                .map(|l| l.handle)
-                .unwrap_or(Handle::NULL);
+            let layer_h = self.entity_layer_handle(layer);
             self.writer
                 .write_handle(DwgReferenceType::HardPointer, layer_h.value());
 
@@ -451,9 +461,7 @@ impl<'a> DwgObjectWriter<'a> {
                 .map(|lt| lt.handle)
                 .or(*linetype_handle)
                 .filter(|handle| !handle.is_null());
-            let has_preserved_handle = linetype_handle
-                .filter(|handle| !handle.is_null())
-                .is_some();
+            let has_preserved_handle = linetype_handle.filter(|handle| !handle.is_null()).is_some();
             let is_bylayer =
                 (lt_lower == "bylayer" || lt_lower.is_empty()) && !has_preserved_handle;
             self.writer.write_bit(is_bylayer);
@@ -521,12 +529,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // ── R2000+: Layer handle (HANDLE: hard pointer) ──
-        let layer_h = self
-            .document
-            .layers
-            .get(layer)
-            .map(|l| l.handle)
-            .unwrap_or(Handle::NULL);
+        let layer_h = self.entity_layer_handle(layer);
         self.writer
             .write_handle(DwgReferenceType::HardPointer, layer_h.value());
 
@@ -540,9 +543,7 @@ impl<'a> DwgObjectWriter<'a> {
             .map(|lt| lt.handle)
             .or(*linetype_handle)
             .filter(|handle| !handle.is_null());
-        let has_preserved_handle = linetype_handle
-            .filter(|handle| !handle.is_null())
-            .is_some();
+        let has_preserved_handle = linetype_handle.filter(|handle| !handle.is_null()).is_some();
         let is_builtin = lt_lower == "bylayer"
             || lt_lower.is_empty()
             || lt_lower == "byblock"
@@ -569,8 +570,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         // ── R2007+: material flags + shadow flags ──
         if self.version.r2007_plus() {
-            let material_handle = material_handle
-                .filter(|handle| self.is_writable_object(handle));
+            let material_handle = material_handle.filter(|handle| self.is_writable_object(handle));
             let material_flags = if material_flags == 0b11 && material_handle.is_none() {
                 0b00
             } else {
@@ -580,7 +580,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_2bits(material_flags);
             if material_flags == 0b11 {
                 if let Some(mh) = material_handle {
-                    self.writer.write_handle(DwgReferenceType::HardPointer, mh.value());
+                    self.writer
+                        .write_handle(DwgReferenceType::HardPointer, mh.value());
                 } else {
                     self.writer.write_handle(DwgReferenceType::HardPointer, 0);
                 }
@@ -593,7 +594,8 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_2bits(plotstyle_flags);
         if plotstyle_flags == 0b11 {
             if let Some(ph) = plotstyle_handle {
-                self.writer.write_handle(DwgReferenceType::HardPointer, ph.value());
+                self.writer
+                    .write_handle(DwgReferenceType::HardPointer, ph.value());
             } else {
                 self.writer.write_handle(DwgReferenceType::HardPointer, 0);
             }
@@ -641,7 +643,7 @@ impl<'a> DwgObjectWriter<'a> {
             owner_handle,
             reactors,
             xdictionary_handle,
-            None,
+            Vec::new(),
         );
     }
 
@@ -654,15 +656,68 @@ impl<'a> DwgObjectWriter<'a> {
             return None;
         }
         let app = self.document.app_ids.get("AcadAnnotative")?;
-        let bytes =
-            crate::io::dwg::annotative_eed::encode(self.version.r2007_plus(), annotative);
+        let bytes = crate::io::dwg::annotative_eed::encode(self.version.r2007_plus(), annotative);
         Some((app.handle.value(), bytes))
+    }
+
+    pub(super) fn annotative_eed_block_for_handle(
+        &self,
+        handle: Handle,
+        annotative: bool,
+    ) -> Option<(u64, Vec<u8>)> {
+        let had_marker = self
+            .existing_xdata_values(handle, "AcadAnnotative")
+            .is_some_and(|values| {
+                values.iter().any(|value| {
+                    matches!(value, crate::xdata::XDataValue::String(label) if label == "AnnotativeData")
+                })
+            });
+        if !annotative && !had_marker {
+            return None;
+        }
+        let app = self.document.app_ids.get("AcadAnnotative")?;
+        let bytes = crate::io::dwg::annotative_eed::encode(self.version.r2007_plus(), annotative);
+        Some((app.handle.value(), bytes))
+    }
+
+    pub(super) fn existing_xdata_values(
+        &self,
+        handle: Handle,
+        application: &str,
+    ) -> Option<Vec<crate::xdata::XDataValue>> {
+        if let Some(record) = self
+            .document
+            .object_xdata
+            .get(&handle)
+            .and_then(|data| data.get_record(application))
+        {
+            return Some(record.values.clone());
+        }
+        let app = self.document.app_ids.get(application)?;
+        let (_, raw) = self
+            .document
+            .eed_by_handle
+            .get(&handle)?
+            .iter()
+            .find(|(app_handle, _)| *app_handle == app.handle.value())?;
+        let source_version = self.document.dwg_source_version.unwrap_or(self.dxf_version);
+        crate::io::dwg::eed_codec::decode_values(
+            raw,
+            source_version >= crate::types::DxfVersion::AC1021,
+            |handle| {
+                self.document
+                    .layers
+                    .iter()
+                    .find(|layer| layer.handle.value() == handle)
+                    .map(|layer| layer.name.clone())
+            },
+        )
     }
 
     /// As [`write_common_non_entity_data`], but merges one extra EED block
     /// (e.g. the annotative marker) with any raw EED preserved by handle.
-    /// An existing block for the same application is replaced, so the marker
-    /// is written exactly once.
+    /// Modeled values replace their source group, preserving other values in
+    /// the same application payload.
     pub fn write_common_non_entity_data_eed(
         &mut self,
         type_code: i16,
@@ -670,7 +725,7 @@ impl<'a> DwgObjectWriter<'a> {
         owner_handle: Handle,
         reactors: &[Handle],
         xdictionary_handle: &Option<Handle>,
-        extra_eed: Option<(u64, Vec<u8>)>,
+        extra_eed: Vec<(u64, Vec<u8>)>,
     ) {
         self.write_common_non_entity_data_eed_internal(
             type_code,
@@ -697,7 +752,7 @@ impl<'a> DwgObjectWriter<'a> {
             owner_handle,
             reactors,
             xdictionary_handle,
-            None,
+            Vec::new(),
             true,
         );
     }
@@ -709,11 +764,12 @@ impl<'a> DwgObjectWriter<'a> {
         owner_handle: Handle,
         reactors: &[Handle],
         xdictionary_handle: &Option<Handle>,
-        extra_eed: Option<(u64, Vec<u8>)>,
+        extra_eed: Vec<(u64, Vec<u8>)>,
         relative_owner: bool,
     ) {
         // ── writeCommonData portion ──
 
+        self.pending_type_code = Some(type_code);
         // Object type
         self.writer.write_object_type(type_code);
 
@@ -725,18 +781,58 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // Handle (absolute)
-        self.writer.main_mut().write_handle_undefined(handle.value());
+        self.writer
+            .main_mut()
+            .write_handle_undefined(handle.value());
 
         // Extended data — look up raw EED by handle for round-trip fidelity
         let mut eed = crate::xdata::ExtendedData::default();
         if let Some(raw) = self.document.eed_by_handle.get(&handle) {
             eed.raw_dwg_eed = raw.clone();
         }
-        if let Some((app, bytes)) = extra_eed {
-            eed.raw_dwg_eed.retain(|(a, _)| *a != app);
-            eed.raw_dwg_eed.push((app, bytes));
+        // XDATA records (from DXF) are encoded for applications that have no
+        // verbatim block.
+        if let Some(xdata) = self.document.object_xdata.get(&handle) {
+            for record in xdata.records() {
+                eed.add_record(record.clone());
+            }
         }
-        self.write_extended_data(&eed);
+        let mut opaque_extra = Vec::new();
+        for (app_handle, bytes) in extra_eed {
+            let application = self
+                .document
+                .app_ids
+                .iter()
+                .find(|app| app.handle.value() == app_handle);
+            let values = crate::io::dwg::eed_codec::decode_values(
+                &bytes,
+                self.version.r2007_plus(),
+                |handle| {
+                    self.document
+                        .layers
+                        .iter()
+                        .find(|layer| layer.handle.value() == handle)
+                        .map(|layer| layer.name.clone())
+                },
+            );
+            if let (Some(application), Some(values)) = (application, values) {
+                if eed.get_record(&application.name).is_none() {
+                    if let Some(values) = self.existing_xdata_values(handle, &application.name) {
+                        let mut source = crate::xdata::ExtendedDataRecord::new(&application.name);
+                        source.values = values;
+                        eed.add_record(source);
+                    }
+                }
+                let mut replacement = crate::xdata::ExtendedDataRecord::new(&application.name);
+                replacement.values = values;
+                eed.merge_modeled_record(&replacement);
+                eed.raw_dwg_eed.retain(|(app, _)| *app != app_handle);
+            } else {
+                eed.raw_dwg_eed.retain(|(app, _)| *app != app_handle);
+                opaque_extra.push((app_handle, bytes));
+            }
+        }
+        self.write_extended_data_with(&eed, &opaque_extra);
 
         // ── R13-R14 Only: size placeholder (after xdata, before owner) ──
         if self.version.r13_14_only() {
@@ -746,7 +842,8 @@ impl<'a> DwgObjectWriter<'a> {
         // ── HANDLE: Owner handle (soft pointer) ──
         // Check for owner override (e.g. for ATTRIB extension dictionaries
         // whose parent entity was re-allocated with a new handle)
-        let effective_owner = self.owner_overrides
+        let effective_owner = self
+            .owner_overrides
             .get(&handle)
             .copied()
             .unwrap_or(owner_handle);
@@ -784,10 +881,9 @@ impl<'a> DwgObjectWriter<'a> {
 
         // Use side-channel xdictionary if struct value is None (roundtrip preservation)
         // Only use it if the xdictionary object actually exists in document.objects,
-        // otherwise BricsCAD reports "Object was erased" for the dangling reference.
+        // otherwise strict readers report an erased object for the dangling reference.
         let effective_xdic = if xdictionary_handle.is_none() {
-            self.document
-                .extension_dictionary_handle(handle)
+            self.extension_dictionary_handle(handle)
                 .filter(|xdic| self.document.objects.contains_key(xdic))
         } else {
             *xdictionary_handle
@@ -806,9 +902,7 @@ impl<'a> DwgObjectWriter<'a> {
             }
         } else {
             // Pre-R2004: always emit xdic handle (0 if None)
-            let xdic_val = effective_xdic
-                .map(|h| h.value())
-                .unwrap_or(0);
+            let xdic_val = effective_xdic.map(|h| h.value()).unwrap_or(0);
             self.writer
                 .write_handle(DwgReferenceType::HardOwnership, xdic_val);
         }
@@ -820,9 +914,11 @@ impl<'a> DwgObjectWriter<'a> {
             }
         }
 
-        // R2013+: binary-data flag
+        // R2013+: retain data-store links while reusing the source section.
         if self.version.r2013_plus(self.dxf_version) {
-            self.writer.write_bit(false);
+            let has_ds_data = self.document.dwg_source_version == Some(self.dxf_version)
+                && self.document.dwg_data_store_handles.contains(&handle);
+            self.writer.write_bit(has_ds_data);
         }
     }
 
@@ -848,12 +944,17 @@ impl<'a> DwgObjectWriter<'a> {
             // 256 (0x100, xref-resolved) are valid; the reader derives
             // is_xref_dep from `== 256`. Writing 0x10 makes AutoCAD reject the
             // record (eDwgObjectImproperlyRead) on xref-dependent table entries.
-            let combined: i16 = if xref_resolved || xref_dependent { 0x100 } else { 0 };
+            let combined: i16 = if xref_resolved || xref_dependent {
+                0x100
+            } else {
+                0
+            };
             self.writer.write_bit_short(combined);
         } else {
             // Pre-R2007: 64-flag B (Referenced), xrefindex+1 BS, Xdep B (XrefDependent)
             self.writer.write_bit(xref_reference);
-            self.writer.write_bit_short(if xref_resolved { 0x100 } else { 0 });
+            self.writer
+                .write_bit_short(if xref_resolved { 0x100 } else { 0 });
             self.writer.write_bit(xref_dependent);
         }
     }
@@ -867,7 +968,41 @@ impl<'a> DwgObjectWriter<'a> {
     /// are encoded into EED bytes and appended for any application not already
     /// carried verbatim, so they survive a save instead of being dropped.
     /// When neither is present a lone BS 0 terminator is written (no EED).
+    pub fn encode_xdata_record(
+        &self,
+        rec: &crate::xdata::ExtendedDataRecord,
+    ) -> Option<(u64, Vec<u8>)> {
+        let app = self.document.app_ids.get(&rec.application_name)?;
+        let code_page =
+            crate::io::dxf::code_page::dwg_code_page_index(&self.document.header.code_page);
+        // The declared DWG page decides the bytes, including its fallback for
+        // pages without a decoder here.
+        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page);
+        let bytes = crate::io::dwg::eed_codec::encode_values_with_encoding(
+            self.version.r2007_plus(),
+            &rec.values,
+            encoding,
+            code_page,
+            |name| {
+                self.document
+                    .layers
+                    .get(name)
+                    .map(|l| l.handle.value())
+                    .unwrap_or(0)
+            },
+        );
+        (bytes.len() <= i16::MAX as usize).then_some((app.handle.value(), bytes))
+    }
+
     pub fn write_extended_data(&mut self, xdata: &crate::xdata::ExtendedData) {
+        self.write_extended_data_with(xdata, &[]);
+    }
+
+    pub fn write_extended_data_with(
+        &mut self,
+        xdata: &crate::xdata::ExtendedData,
+        extra: &[(u64, Vec<u8>)],
+    ) {
         // EED string entries (code 0) are code-page encoded pre-R2007 and
         // UTF-16 in R2007+, so verbatim `raw_dwg_eed` bytes captured from a
         // different encoding family garble and desync the record. Drop them on
@@ -895,41 +1030,13 @@ impl<'a> DwgObjectWriter<'a> {
         // unregistered app is skipped rather than emitting a dangling handle.
         // An app already present verbatim in `raw_blocks` wins, so a clean DWG
         // round-trip stays byte-for-byte and we never double-write one app.
-        let wide = self.version.r2007_plus();
-        let mut record_blocks: Vec<(u64, Vec<u8>)> = Vec::new();
-        for rec in xdata.records() {
-            let Some(app) = self.document.app_ids.get(&rec.application_name) else {
-                continue;
-            };
-            let app_handle = app.handle.value();
-            if raw_blocks.iter().any(|(a, _)| *a == app_handle) {
-                continue;
-            }
-            let code_page =
-                crate::io::dxf::code_page::dwg_code_page_index(&self.document.header.code_page);
-            let encoding =
-                crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
-                    .unwrap_or(encoding_rs::WINDOWS_1252);
-            let bytes = crate::io::dwg::eed_codec::encode_values_with_encoding(
-                wide,
-                &rec.values,
-                encoding,
-                code_page,
-                |name| {
-                    self.document
-                        .layers
-                        .get(name)
-                        .map(|l| l.handle.value())
-                        .unwrap_or(0)
-                },
-            );
-            // The block length is framed as a BS (i16); skip a pathologically
-            // large record rather than overflow and desync the object stream.
-            if bytes.len() > i16::MAX as usize {
-                continue;
-            }
-            record_blocks.push((app_handle, bytes));
-        }
+        let record_blocks: Vec<(u64, Vec<u8>)> = xdata
+            .records()
+            .iter()
+            .filter_map(|rec| self.encode_xdata_record(rec))
+            .filter(|(app, _)| !raw_blocks.iter().chain(extra).any(|(a, _)| a == app))
+            .chain(extra.iter().cloned())
+            .collect();
 
         if raw_blocks.is_empty() && record_blocks.is_empty() {
             // No EED: write BS 0 terminator
@@ -965,7 +1072,7 @@ impl<'a> DwgObjectWriter<'a> {
     // ── class_type_code ─────────────────────────────────────────────
     /// Look up the DXF class number for an UNLISTED object type.
     ///
-    /// In C# ACadSharp, types not in the `ObjectType` enum (UNLISTED)
+    /// In the reference implementation, types not in the `ObjectType` enum (UNLISTED)
     /// **always** use their DXF class number (500+) as the DWG type
     /// code — regardless of version.  Only fixed types (0–82 in the
     /// ODA spec) use literal type codes.

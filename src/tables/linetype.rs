@@ -16,17 +16,26 @@ pub struct LineTypeElement {
 impl LineTypeElement {
     /// Create a dash element
     pub fn dash(length: f64) -> Self {
-        LineTypeElement { length: length.abs(), complex: None }
+        LineTypeElement {
+            length: length.abs(),
+            complex: None,
+        }
     }
 
     /// Create a space element
     pub fn space(length: f64) -> Self {
-        LineTypeElement { length: -length.abs(), complex: None }
+        LineTypeElement {
+            length: -length.abs(),
+            complex: None,
+        }
     }
 
     /// Create a dot element
     pub fn dot() -> Self {
-        LineTypeElement { length: 0.0, complex: None }
+        LineTypeElement {
+            length: 0.0,
+            complex: None,
+        }
     }
 
     /// Check if this is a dash
@@ -63,6 +72,8 @@ pub struct LineType {
     pub alignment: char,
     /// Whether this linetype is externally dependent on an xref
     pub xref_dependent: bool,
+    /// Block record of the xref this linetype came from (NULL when local).
+    pub xref_block_record_handle: Handle,
 }
 
 impl LineType {
@@ -76,6 +87,7 @@ impl LineType {
             pattern_length: 0.0,
             alignment: 'A',
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
         }
     }
 
@@ -89,6 +101,7 @@ impl LineType {
             pattern_length: 0.0,
             alignment: 'A',
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
         }
     }
 
@@ -102,6 +115,7 @@ impl LineType {
             pattern_length: 0.0,
             alignment: 'A',
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
         }
     }
 
@@ -115,6 +129,7 @@ impl LineType {
             pattern_length: 0.0,
             alignment: 'A',
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
         }
     }
 
@@ -177,14 +192,9 @@ impl TableEntry for LineType {
     }
 
     fn is_standard(&self) -> bool {
-        matches!(
-            self.name.as_str(),
-            "Continuous" | "ByLayer" | "ByBlock"
-        )
+        matches!(self.name.as_str(), "Continuous" | "ByLayer" | "ByBlock")
     }
 }
-
-
 
 /// The kind of content a complex linetype segment renders.
 /// This replaces the raw flag bits so the model describes **what** the segment
@@ -215,6 +225,10 @@ pub struct LineTypeComplexData {
     pub rotation: f64,
     /// Rotation is world-absolute rather than relative to the line tangent.
     pub absolute_rotation: bool,
+    /// Raw source element flags, including mode bits not yet modeled by the
+    /// public API. Known content/absolute bits are kept synchronized on write.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub source_flags: u8,
     /// Offset from the element's position on the line (DXF 44, 45):
     /// `[along-line, perpendicular]` in drawing units.
     pub offset: [f64; 2],
@@ -228,6 +242,7 @@ impl Default for LineTypeComplexData {
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [0.0, 0.0],
         }
     }
@@ -282,7 +297,9 @@ impl LineTypeComplexData {
     /// Ensure the content variant is `Text`, switching if necessary.
     pub(crate) fn ensure_text(&mut self) {
         if !matches!(self.content, LineTypeComplexContent::Text { .. }) {
-            self.content = LineTypeComplexContent::Text { text: String::new() };
+            self.content = LineTypeComplexContent::Text {
+                text: String::new(),
+            };
         }
     }
 
@@ -304,6 +321,7 @@ impl LineTypeComplexData {
 
     /// Classify content from DXF element-type flags (code 75).
     pub(crate) fn apply_dxf_flags(&mut self, flags: i16) {
+        self.source_flags = flags as u8;
         self.absolute_rotation = flags & 0x01 != 0;
         // DXF: 0x04 = shape, 0x02 = text
         if flags & 0x04 != 0 {
@@ -317,7 +335,8 @@ impl LineTypeComplexData {
 impl LineTypeElement {
     /// Return mutable reference to complex data, initializing if absent.
     pub fn complex_mut(&mut self) -> &mut LineTypeComplexData {
-        self.complex.get_or_insert_with(LineTypeComplexData::default)
+        self.complex
+            .get_or_insert_with(LineTypeComplexData::default)
     }
 
     /// Check if this element displays a shape.
@@ -332,7 +351,9 @@ impl LineTypeElement {
 
     /// Check if the rotation is absolute (bit 0 of flags).
     pub fn is_absolute_rotation(&self) -> bool {
-        self.complex.as_ref().map_or(false, |c| c.is_absolute_rotation())
+        self.complex
+            .as_ref()
+            .map_or(false, |c| c.is_absolute_rotation())
     }
 
     /// Check if this element has complex data.
@@ -353,6 +374,7 @@ mod tests {
             scale: 2.0,
             rotation: 45.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [1.0, 2.0],
         };
         assert!(c.is_shape());
@@ -365,11 +387,14 @@ mod tests {
     #[test]
     fn test_complex_data_text() {
         let c = LineTypeComplexData {
-            content: LineTypeComplexContent::Text { text: "X".to_string() },
+            content: LineTypeComplexContent::Text {
+                text: "X".to_string(),
+            },
             style_handle: Handle::new(50),
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [0.0, 0.5],
         };
         assert!(!c.is_shape());
@@ -387,6 +412,7 @@ mod tests {
             scale: 1.0,
             rotation: 90.0,
             absolute_rotation: true,
+            source_flags: 1,
             offset: [0.0, 0.0],
         };
         assert!(c.is_shape());
@@ -416,7 +442,9 @@ mod tests {
 
         let mut elem = LineTypeElement::dot();
         elem.complex = Some(LineTypeComplexData {
-            content: LineTypeComplexContent::Text { text: "A".to_string() },
+            content: LineTypeComplexContent::Text {
+                text: "A".to_string(),
+            },
             ..Default::default()
         });
         lt.elements.push(elem);
@@ -447,7 +475,9 @@ mod tests {
     #[test]
     fn test_ensure_shape_switches_content() {
         let mut c = LineTypeComplexData {
-            content: LineTypeComplexContent::Text { text: "hi".to_string() },
+            content: LineTypeComplexContent::Text {
+                text: "hi".to_string(),
+            },
             ..Default::default()
         };
         c.ensure_shape();

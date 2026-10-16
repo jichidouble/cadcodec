@@ -1,7 +1,7 @@
 //! DWG Classes section reader
 //!
 //! Reads the AcDb:Classes section from a DWG file, producing a
-//! `DxfClassCollection`. Mirrors ACadSharp's `DwgClassesReader`.
+//! `DxfClassCollection`. Mirrors the reference `DwgClassesReader`.
 //!
 //! ## Section layout
 //!
@@ -30,7 +30,11 @@ use crate::types::DxfVersion;
 ///
 /// # Returns
 /// `DxfClassCollection` containing all parsed class definitions.
-pub fn read_classes(data: &[u8], version: DxfVersion, maintenance_version: u8) -> Result<DxfClassCollection> {
+pub fn read_classes(
+    data: &[u8],
+    version: DxfVersion,
+    maintenance_version: u8,
+) -> Result<DxfClassCollection> {
     read_classes_with_encoding(
         data,
         version,
@@ -43,15 +47,13 @@ pub fn read_classes_with_encoding(
     data: &[u8],
     version: DxfVersion,
     maintenance_version: u8,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
 ) -> Result<DxfClassCollection> {
     let dwg = DwgVersion::from_dxf_version(version)?;
 
     // ── Verify start sentinel ──
     if data.len() < 34 {
-        return Err(DxfError::Parse(
-            "Classes section too short".to_string(),
-        ));
+        return Err(DxfError::Parse("Classes section too short".to_string()));
     }
     if &data[..16] != &start_sentinels::CLASSES {
         return Err(DxfError::InvalidSentinel(
@@ -76,8 +78,7 @@ pub fn read_classes_with_encoding(
     let section_data = &data[data_start..data_start + section_size];
 
     // ── Create the bit reader over the section data ──
-    let mut reader =
-        DwgBitReader::with_encoding(section_data.to_vec(), dwg, version, encoding);
+    let mut reader = DwgBitReader::with_encoding(section_data.to_vec(), dwg, version, encoding);
 
     // R2007+: The section data has an RL prefix (total data size in bits)
     // from save_position_for_size. Text is INLINE (not in a separate stream).
@@ -186,9 +187,13 @@ mod tests {
         let read_classes = read_classes(&written, DxfVersion::AC1015, 0).unwrap();
 
         // Should have the same number of classes
-        assert_eq!(read_classes.len(), classes.len(),
+        assert_eq!(
+            read_classes.len(),
+            classes.len(),
             "Class count mismatch: wrote {}, read {}",
-            classes.len(), read_classes.len());
+            classes.len(),
+            read_classes.len()
+        );
     }
 
     #[test]
@@ -200,13 +205,20 @@ mod tests {
         let written = classes_writer::write_classes(DxfVersion::AC1018, &class_vec, 0);
         let read_classes = read_classes(&written, DxfVersion::AC1018, 0).unwrap();
 
-        assert_eq!(read_classes.len(), classes.len(),
+        assert_eq!(
+            read_classes.len(),
+            classes.len(),
             "Class count mismatch: wrote {}, read {}",
-            classes.len(), read_classes.len());
+            classes.len(),
+            read_classes.len()
+        );
 
         // Verify a specific class and preserve its positional class number.
         let acdb_placeholder = read_classes.get_by_name("ACDBPLACEHOLDER");
-        assert!(acdb_placeholder.is_some(), "Should find ACDBPLACEHOLDER class");
+        assert!(
+            acdb_placeholder.is_some(),
+            "Should find ACDBPLACEHOLDER class"
+        );
         let cls = acdb_placeholder.unwrap();
         let expected = classes.get_by_name("ACDBPLACEHOLDER").unwrap();
         assert_eq!(cls.cpp_class_name, "AcDbPlaceHolder");

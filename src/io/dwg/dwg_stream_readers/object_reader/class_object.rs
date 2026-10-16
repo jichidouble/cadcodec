@@ -5,17 +5,21 @@ use crate::io::dwg::dwg_version::DwgVersion;
 use crate::objects::*;
 use crate::types::{DxfVersion, Handle, Vector3};
 
-const MAX_ITEMS: i32 = 100_000;
-
-fn count(value: i32) -> usize {
-    value.max(0).min(MAX_ITEMS) as usize
+fn count(value: i32, reader: &DwgMergedReader) -> usize {
+    reader.checked_count(i64::from(value)) as usize
 }
 
+/// `read_predefined_bit`: whether the R2013+ `has_predefined` flag follows
+/// `display_index`. It does for RENDERSETTINGS, but not for
+/// MENTALRAYRENDERSETTINGS (its body starts right after `display_index`;
+/// consuming a bit there shifted every following field) nor for
+/// RAPIDRTRENDERSETTINGS, which stores the flag after its own fields.
 fn read_render_settings(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
     dxf_version: DxfVersion,
     rapid_rt: bool,
+    read_predefined_bit: bool,
 ) -> RenderSettings {
     let stored_version = reader.read_bit_long();
     RenderSettings {
@@ -34,7 +38,7 @@ fn read_render_settings(
         environment_image_filename: reader.read_variable_text(),
         description: reader.read_variable_text(),
         display_index: reader.read_bit_long(),
-        has_predefined: if !rapid_rt && version.r2013_plus(dxf_version) {
+        has_predefined: if read_predefined_bit {
             reader.read_bit()
         } else {
             false
@@ -44,15 +48,22 @@ fn read_render_settings(
 
 fn read_point_cloud_ramps(reader: &mut DwgMergedReader) -> Vec<PointCloudColorRamp> {
     let mut result = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
+        let id = reader.read_variable_text();
         let class_version = reader.read_bit_short();
-        let mut color_schemes = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
-            color_schemes.push(reader.read_variable_text());
+        let mut colors = Vec::new();
+        for _ in 0..count(reader.read_bit_long(), reader) {
+            let color = reader.read_bit_long();
+            colors.push(PointCloudRampColor {
+                color,
+                visible: reader.read_bit(),
+            });
         }
         result.push(PointCloudColorRamp {
+            id,
             class_version,
-            color_schemes,
+            colors,
+            name: reader.read_variable_text(),
         });
     }
     result
@@ -63,7 +74,12 @@ fn read_point_cloud_definition(reader: &mut DwgMergedReader) -> PointCloudDefini
         class_version: reader.read_bit_long(),
         source_filename: reader.read_variable_text(),
         is_loaded: reader.read_bit(),
-        point_count: reader.read_bit_long_long(),
+        // A 64-bit count stored as two raw longs, low half first.
+        point_count: {
+            let low = reader.read_raw_long() & 0xFFFF_FFFF;
+            let high = reader.read_raw_long();
+            low + (high << 32)
+        },
         extents_min: reader.read_3bit_double(),
         extents_max: reader.read_3bit_double(),
     }
@@ -110,10 +126,7 @@ fn read_view_rep_sketch_geometry(
             reserved: reader.read_bit_double(),
         },
         42 => {
-            let flags = [
-                reader.read_bit(),
-                reader.read_bit(),
-            ];
+            let flags = [reader.read_bit(), reader.read_bit()];
             let degree = reader.read_bit_short() as i32;
             let tolerance = reader.read_bit_double();
             let knot_header = [
@@ -121,8 +134,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut knots = Vec::with_capacity(count(knot_header[0]));
-            for _ in 0..count(knot_header[0]) {
+            let mut knots = Vec::with_capacity(count(knot_header[0], reader));
+            for _ in 0..count(knot_header[0], reader) {
                 knots.push(reader.read_bit_double());
             }
             let weight_header = [
@@ -130,8 +143,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut weights = Vec::with_capacity(count(weight_header[0]));
-            for _ in 0..count(weight_header[0]) {
+            let mut weights = Vec::with_capacity(count(weight_header[0], reader));
+            for _ in 0..count(weight_header[0], reader) {
                 weights.push(reader.read_bit_double());
             }
             let point_header = [
@@ -139,9 +152,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut control_points =
-                Vec::with_capacity(count(point_header[0]));
-            for _ in 0..count(point_header[0]) {
+            let mut control_points = Vec::with_capacity(count(point_header[0], reader));
+            for _ in 0..count(point_header[0], reader) {
                 control_points.push(reader.read_3bit_double());
             }
             ViewRepSketchGeometry::Nurb {
@@ -188,11 +200,11 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
     let geometry_version = reader.read_bit_long();
     let geometry_marker = reader.read_bit_long();
     let mut sketches = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
         let id = reader.read_bit_long();
         let sketch_version = reader.read_bit_long();
         let mut references = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
+        for _ in 0..count(reader.read_bit_long(), reader) {
             references.push(ViewRepSketchReference {
                 object: read_view_rep_handle(reader),
                 flag: reader.read_bit(),
@@ -213,32 +225,20 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
             final_flag,
         });
     }
-    let related_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let related_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let source_manager = read_view_rep_handle(reader);
-    let owned_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
-    let optional_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let owned_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
+    let optional_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let position = reader.read_2raw_double();
     let rotation = reader.read_bit_double();
     let orientation = read_view_rep_handle(reader);
     let is_active = reader.read_bit();
     let projection = reader.read_bit_short();
-    let linked_views = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let linked_views = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let mut section_sketches = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
         let class_name = reader.read_variable_text();
-        let path_count = count(reader.read_bit_short() as i32);
+        let path_count = count(reader.read_bit_short() as i32, reader);
         let mut objects = Vec::with_capacity(path_count.saturating_add(1));
         for _ in 0..=path_count {
             objects.push(read_view_rep_handle(reader));
@@ -267,7 +267,7 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
         let class_name = reader.read_variable_text();
         let block_path_version = reader.read_bit_long();
         let mut entries = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
+        for _ in 0..count(reader.read_bit_long(), reader) {
             entries.push(ViewRepBlockPathEntry {
                 flag: reader.read_byte(),
                 kind: reader.read_byte(),
@@ -354,125 +354,76 @@ pub fn read_class_object_data(
             let source_status = reader.read_bit_long();
             let model = Handle::from(reader.read_main_handle());
             let guid = read_view_rep_guid(reader);
-            let references = [
-                read_view_rep_handle(reader),
-                read_view_rep_handle(reader),
-            ];
-            let tail_values = [
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-            ];
+            let references = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
+            let tail_values = [reader.read_bit_long(), reader.read_bit_long()];
             let orientation = read_view_rep_handle(reader);
-            ClassObjectData::ViewRepModelSpaceSource(
-                ViewRepModelSpaceSource {
-                    enabled,
-                    header_values,
-                    transform,
-                    source_version,
-                    source_status,
-                    model,
-                    guid,
-                    references,
-                    tail_values,
-                    orientation,
-                },
-            )
+            ClassObjectData::ViewRepModelSpaceSource(ViewRepModelSpaceSource {
+                enabled,
+                header_values,
+                transform,
+                source_version,
+                source_status,
+                model,
+                guid,
+                references,
+                tail_values,
+                orientation,
+            })
         }
         "ACDBVIEWREP" => ClassObjectData::ViewRep(read_view_rep(reader)),
-        "ACDBVIEWREPSOURCEMGR" => {
-            ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
-                has_source: reader.read_bit(),
-                source: Handle::from(reader.read_handle()),
-                status: reader.read_bit_long(),
-            })
-        }
-        "ACDBVIEWREPSTANDARD" => {
-            ClassObjectData::ViewRepStandard(ViewRepStandard {
-                values: [
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                ],
-            })
-        }
-        "ACDBVIEWREPORIENTATIONDEF" => {
-            ClassObjectData::ViewRepOrientationDefinition
-        }
-        "ACDBVIEWREPORIENTATION" => {
-            ClassObjectData::ViewRepOrientation(ViewRepOrientation {
-                camera: reader.read_3bit_double(),
-                target: reader.read_3bit_double(),
-                normal: reader.read_3bit_double(),
-            })
-        }
+        "ACDBVIEWREPSOURCEMGR" => ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
+            has_source: reader.read_bit(),
+            source: Handle::from(reader.read_handle()),
+            status: reader.read_bit_long(),
+        }),
+        "ACDBVIEWREPSTANDARD" => ClassObjectData::ViewRepStandard(ViewRepStandard {
+            values: [
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+            ],
+        }),
+        "ACDBVIEWREPORIENTATIONDEF" => ClassObjectData::ViewRepOrientationDefinition,
+        "ACDBVIEWREPORIENTATION" => ClassObjectData::ViewRepOrientation(ViewRepOrientation {
+            camera: reader.read_3bit_double(),
+            target: reader.read_3bit_double(),
+            normal: reader.read_3bit_double(),
+        }),
         "ACDBVIEWREPSECTIONDEFINITION" => {
-            ClassObjectData::ViewRepSectionDefinition(
-                ViewRepSectionDefinition {
-                    version: reader.read_bit_long(),
-                    section_depth: reader.read_bit_double(),
-                    flags: [
-                        reader.read_bit_long(),
-                        reader.read_bit_long(),
-                    ],
-                },
-            )
+            ClassObjectData::ViewRepSectionDefinition(ViewRepSectionDefinition {
+                version: reader.read_bit_long(),
+                section_depth: reader.read_bit_double(),
+                flags: [reader.read_bit_long(), reader.read_bit_long()],
+            })
         }
         "ACDBSYMODELSPACEVIEWSELSET" => {
             let version = reader.read_bit_long();
             let mut entities = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 entities.push(Handle::from(reader.read_handle()));
             }
-            ClassObjectData::ViewRepModelSpaceViewSelectionSet(
-                ViewRepModelSpaceViewSelectionSet { version, entities },
-            )
-        }
-        "SPATIAL_INDEX" => {
-            let last_updated_julian_day = reader.read_bit_long();
-            let last_updated_milliseconds = reader.read_bit_long();
-            let min_corner = crate::types::Vector3::new(
-                reader.read_bit_double(),
-                reader.read_bit_double(),
-                reader.read_bit_double(),
-            );
-            let max_corner = crate::types::Vector3::new(
-                reader.read_bit_double(),
-                reader.read_bit_double(),
-                reader.read_bit_double(),
-            );
-            let mut indexed_objects = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
-                // AcDbSpatialIndex stores its indexed-entity IDs inline in
-                // the main data stream, not in the trailing object-handle
-                // stream. The latter contains only the ordinary common-object
-                // owner/reactor references.
-                indexed_objects.push(Handle::from(reader.read_main_handle()));
-            }
-            let binary_size = count(reader.read_bit_long());
-            // Autodesk documents the trailing binary block as an internal,
-            // ignorable acceleration cache. Consume it to keep the stream
-            // aligned; the semantic index is the extents + ordered object IDs.
-            let _cached_acceleration_data = reader.read_bytes(binary_size);
-            ClassObjectData::SpatialIndex(SpatialIndex {
-                last_updated_julian_day,
-                last_updated_milliseconds,
-                min_corner,
-                max_corner,
-                indexed_objects,
+            ClassObjectData::ViewRepModelSpaceViewSelectionSet(ViewRepModelSpaceViewSelectionSet {
+                version,
+                entities,
             })
         }
+        // AcDbSpatialIndex is an undocumented, host-rebuilt acceleration cache. The
+        // previous field-level parse mis-read it (garbage extents and ids) and the
+        // re-written object made AutoCAD reject the drawing (issue #80). Leave it
+        // to the opaque path, which carries the record through verbatim.
+        "SPATIAL_INDEX" => return None,
         "LAYERFILTER" => {
             let mut names = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 names.push(reader.read_variable_text());
             }
             ClassObjectData::LayerFilter(LayerFilter { names })
         }
         "PARTIAL_VIEWING_INDEX" => {
-            let num_entries = count(reader.read_bit_long());
+            let num_entries = count(reader.read_bit_long(), reader);
             let has_entries = num_entries != 0 && reader.read_bit();
             let mut entries = Vec::with_capacity(num_entries);
             for _ in 0..num_entries {
@@ -491,7 +442,7 @@ pub fn read_class_object_data(
             if !version.r2000_plus() {
                 return None;
             }
-            let size = count(reader.read_bit_long());
+            let size = count(reader.read_bit_long(), reader);
             ClassObjectData::VbaProject(VbaProject {
                 storage: crate::compound_file::StructuredStoragePayload::decode(
                     &reader.read_bytes(size),
@@ -501,7 +452,7 @@ pub fn read_class_object_data(
         "SECTION_MANAGER" => {
             let is_live = reader.read_bit();
             let mut sections = Vec::new();
-            for _ in 0..count(reader.read_bit_short() as i32) {
+            for _ in 0..count(reader.read_bit_short() as i32, reader) {
                 sections.push(Handle::from(reader.read_handle()));
             }
             ClassObjectData::SectionManager(SectionManager { is_live, sections })
@@ -509,17 +460,17 @@ pub fn read_class_object_data(
         "SECTION_SETTINGS" => {
             let current_type = reader.read_bit_long();
             let mut types = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(4) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(4) {
                 let section_type = reader.read_bit_long();
                 let generation = reader.read_bit_long();
                 let mut sources = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     sources.push(Handle::from(reader.read_handle()));
                 }
                 let destination_block = Handle::from(reader.read_handle());
                 let destination_file = reader.read_variable_text();
                 let mut geometry = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     geometry.push(SectionGeometrySettings {
                         geometry_count: reader.read_bit_long(),
                         index: reader.read_bit_long(),
@@ -560,7 +511,7 @@ pub fn read_class_object_data(
         "LIGHTLIST" => {
             let class_version = reader.read_bit_long();
             let mut lights = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 lights.push(LightListEntry {
                     handle: Handle::from(reader.read_handle()),
                     name: reader.read_variable_text(),
@@ -589,10 +540,10 @@ pub fn read_class_object_data(
             version,
             dxf_version,
             false,
+            version.r2013_plus(dxf_version),
         )),
         "MENTALRAYRENDERSETTINGS" => {
-            let base =
-                read_render_settings(reader, version, dxf_version, false);
+            let base = read_render_settings(reader, version, dxf_version, false, false);
             ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
                 base,
                 version: reader.read_bit_long(),
@@ -632,10 +583,7 @@ pub fn read_class_object_data(
                     reader.read_bit(),
                     reader.read_bit(),
                 ],
-                final_gathering_sample_radius: [
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                ],
+                final_gathering_sample_radius: [reader.read_bit_double(), reader.read_bit_double()],
                 light_luminance_scale: reader.read_bit_double(),
                 diagnostics_mode: reader.read_bit_short(),
                 diagnostics_grid_mode: reader.read_bit_short(),
@@ -652,8 +600,7 @@ pub fn read_class_object_data(
             })
         }
         "RAPIDRTRENDERSETTINGS" => {
-            let mut base =
-                read_render_settings(reader, version, dxf_version, true);
+            let mut base = read_render_settings(reader, version, dxf_version, true, false);
             let rapid_version = reader.read_bit_long();
             let render_target = reader.read_bit_long();
             let render_level = reader.read_bit_long();
@@ -714,12 +661,10 @@ pub fn read_class_object_data(
             offset: reader.read_2bit_double(),
             scale: reader.read_2bit_double(),
         }),
-        "SKYLIGHT_BACKGROUND" => {
-            ClassObjectData::SkyLightBackground(SkyLightBackground {
-                class_version: reader.read_bit_long(),
-                sun: Handle::from(reader.read_handle()),
-            })
-        }
+        "SKYLIGHT_BACKGROUND" => ClassObjectData::SkyLightBackground(SkyLightBackground {
+            class_version: reader.read_bit_long(),
+            sun: Handle::from(reader.read_handle()),
+        }),
         "SOLID_BACKGROUND" => ClassObjectData::SolidBackground(SolidBackground {
             class_version: reader.read_bit_long(),
             color: reader.read_bit_long() as u32,
@@ -752,20 +697,18 @@ pub fn read_class_object_data(
             triangle_count: reader.read_bit_long(),
             display_index: reader.read_bit_long(),
         }),
-        "RENDERENVIRONMENT" => {
-            ClassObjectData::RenderEnvironment(RenderEnvironment {
-                class_version: reader.read_bit_long(),
-                fog_enabled: reader.read_bit(),
-                fog_background_enabled: reader.read_bit(),
-                fog_color: [reader.read_byte(), reader.read_byte(), reader.read_byte()],
-                fog_density_near: reader.read_bit_double(),
-                fog_density_far: reader.read_bit_double(),
-                fog_distance_near: reader.read_bit_double(),
-                fog_distance_far: reader.read_bit_double(),
-                environment_image_enabled: reader.read_bit(),
-                environment_image_filename: reader.read_variable_text(),
-            })
-        }
+        "RENDERENVIRONMENT" => ClassObjectData::RenderEnvironment(RenderEnvironment {
+            class_version: reader.read_bit_long(),
+            fog_enabled: reader.read_bit(),
+            fog_background_enabled: reader.read_bit(),
+            fog_color: [reader.read_byte(), reader.read_byte(), reader.read_byte()],
+            fog_density_near: reader.read_bit_double(),
+            fog_density_far: reader.read_bit_double(),
+            fog_distance_near: reader.read_bit_double(),
+            fog_distance_far: reader.read_bit_double(),
+            environment_image_enabled: reader.read_bit(),
+            environment_image_filename: reader.read_variable_text(),
+        }),
         "RENDERGLOBAL" => ClassObjectData::RenderGlobal(RenderGlobal {
             class_version: reader.read_bit_long(),
             procedure: reader.read_bit_long(),
@@ -794,23 +737,21 @@ pub fn read_class_object_data(
             class_version: reader.read_bit_short(),
             point: reader.read_3bit_double(),
         }),
-        "TVDEVICEPROPERTIES" => {
-            ClassObjectData::TvDeviceProperties(TvDeviceProperties {
-                flags: reader.read_bit_long() as u32,
-                max_regen_threads: reader.read_bit_short(),
-                use_lut_palette: reader.read_bit_long(),
-                alternate_highlight: reader.read_bit_long_long(),
-                alternate_highlight_color: reader.read_bit_long_long(),
-                geometry_shader_usage: reader.read_bit_long_long(),
-                blending_mode: reader.read_bit_long(),
-                antialiasing_level: reader.read_bit_double(),
-                reserved_double: reader.read_bit_double(),
-            })
-        }
+        "TVDEVICEPROPERTIES" => ClassObjectData::TvDeviceProperties(TvDeviceProperties {
+            flags: reader.read_bit_long() as u32,
+            max_regen_threads: reader.read_bit_short(),
+            use_lut_palette: reader.read_bit_long(),
+            alternate_highlight: reader.read_bit_long_long(),
+            alternate_highlight_color: reader.read_bit_long_long(),
+            geometry_shader_usage: reader.read_bit_long_long(),
+            blending_mode: reader.read_bit_long(),
+            antialiasing_level: reader.read_bit_double(),
+            reserved_double: reader.read_bit_double(),
+        }),
         "ACDBPOINTCLOUDDEF" | "POINTCLOUDDEF" => {
             ClassObjectData::PointCloudDefinition(read_point_cloud_definition(reader))
         }
-        "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => {
+        "ACDBPOINTCLOUDDEF_EX" | "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => {
             ClassObjectData::PointCloudDefinitionEx(read_point_cloud_definition(reader))
         }
         "ACDBPOINTCLOUDDEF_REACTOR" | "POINTCLOUDDEF_REACTOR" => {
@@ -846,10 +787,10 @@ pub fn read_class_object_data(
         "CONTEXTDATAMANAGER" => {
             let object_context = Handle::from(reader.read_handle());
             let mut sub_managers = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 let handle = Handle::from(reader.read_handle());
                 let mut entries = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     entries.push(ContextDataEntry {
                         item: Handle::from(reader.read_handle()),
                         name: reader.read_variable_text(),
@@ -878,7 +819,7 @@ pub fn read_class_object_data(
             };
             let select_dates_from_calendar = reader.read_bit();
             let mut dates = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(10_000) {
                 dates.push(SunStudyDate {
                     julian_day: reader.read_bit_long(),
                     milliseconds: reader.read_bit_long(),
@@ -895,7 +836,7 @@ pub fn read_class_object_data(
                 (0, 0, 0)
             };
             let mut hours = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(10_000) {
                 hours.push(reader.read_bit());
             }
             ClassObjectData::SunStudy(SunStudy {
@@ -928,20 +869,41 @@ pub fn read_class_object_data(
         }
         "DATATABLE" => {
             let flags = reader.read_bit_short();
-            let column_count = count(reader.read_bit_long());
-            let row_count = reader.read_bit_long();
+            let raw_column_count = reader.read_bit_long();
+            let column_count = reader.checked_count(i64::from(raw_column_count)) as i32;
+            let raw_row_count = reader.read_bit_long();
+            let row_count = reader.checked_count(i64::from(raw_row_count)) as i32;
+            if reader.checked_count(i64::from(column_count) * i64::from(row_count))
+                != i64::from(column_count) * i64::from(row_count)
+                || column_count < 0 || row_count < 0
+            {
+                return None;
+            }
             let name = reader.read_variable_text();
-            let mut columns = Vec::with_capacity(column_count);
+            let mut columns = Vec::with_capacity(column_count as usize);
             for _ in 0..column_count {
                 let value_type = reader.read_bit_long();
+                // Unknown schemas must keep the complete raw record: skipping
+                // a cell would desynchronize all subsequent columns.
+                let cell_type = DataTableCellType::from_code(value_type)?;
+                if !cell_type.has_native_codec() {
+                    return None;
+                }
                 let column_name = reader.read_variable_text();
                 let mut rows = Vec::new();
-                for _ in 0..count(row_count) {
-                    rows.push(DataTableValue {
-                        integer: reader.read_bit_long(),
-                        real: reader.read_bit_double(),
-                        text: reader.read_variable_text(),
-                    });
+                for _ in 0..count(row_count, reader) {
+                    let mut value = DataTableValue::default();
+                    match cell_type {
+                        DataTableCellType::Integer => value.integer = reader.read_bit_long(),
+                        DataTableCellType::Double => value.real = reader.read_bit_double(),
+                        DataTableCellType::Text => value.text = reader.read_variable_text(),
+                        DataTableCellType::Point => value.point = reader.read_3bit_double(),
+                        DataTableCellType::ObjectId => {
+                            value.handle = Handle::from(reader.read_handle());
+                        }
+                        _ => return None,
+                    }
+                    rows.push(value);
                 }
                 columns.push(DataTableColumn {
                     value_type,
@@ -975,7 +937,7 @@ pub fn read_class_object_data(
             let status_flags = reader.read_bit_long();
             let update_status = reader.read_variable_text();
             let mut custom_data = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 custom_data.push(DataLinkCustomData {
                     target: Handle::from(reader.read_handle()),
                     value: reader.read_variable_text(),
@@ -1010,24 +972,22 @@ pub fn read_class_object_data(
             let associated_step_count = reader.read_bit_long();
             let associated_subentity_count = reader.read_bit_long();
             let mut steps = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 steps.push(reader.read_bit_long());
             }
             let mut subentities = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 subentities.push(reader.read_bit_long());
             }
-            ClassObjectData::PersistentSubentityManager(
-                PersistentSubentityManager {
-                    class_version,
-                    reserved_zero,
-                    reserved_two,
-                    associated_step_count,
-                    associated_subentity_count,
-                    steps,
-                    subentities,
-                },
-            )
+            ClassObjectData::PersistentSubentityManager(PersistentSubentityManager {
+                class_version,
+                reserved_zero,
+                reserved_two,
+                associated_step_count,
+                associated_subentity_count,
+                steps,
+                subentities,
+            })
         }
         "GEOMAPIMAGE" => ClassObjectData::GeoMapImage(GeoMapImage {
             class_version: reader.read_bit_long(),
@@ -1147,31 +1107,28 @@ pub fn read_class_object_data(
                 end_line_overshoot: reader.read_bit_double(),
                 hatch_angles: {
                     let mut angles = Vec::new();
-                    for _ in 0..count(reader.read_bit_long()) {
+                    for _ in 0..count(reader.read_bit_long(), reader) {
                         angles.push(reader.read_bit_double());
                     }
                     angles
                 },
             })
         }
-        "ACMECOMMANDHISTORY" => {
-            ClassObjectData::AcMeCommandHistory(AcMeCommandHistory {
-                class_version: reader.read_bit_short(),
-            })
-        }
+        "ACMECOMMANDHISTORY" => ClassObjectData::AcMeCommandHistory(AcMeCommandHistory {
+            class_version: reader.read_bit_short(),
+        }),
         "ACMESCOPE" => ClassObjectData::AcMeScope(AcMeScope {
             class_version: reader.read_bit_short(),
         }),
-        "ACMESTATEMGR" => {
-            ClassObjectData::AcMeStateManager(AcMeStateManager {
-                class_version: reader.read_bit_short(),
-            })
-        }
-        "CSACDOCUMENTOPTIONS" => {
-            ClassObjectData::CsacDocumentOptions(CsacDocumentOptions {
-                class_version: reader.read_bit_short(),
-            })
-        }
+        "ACMESTATEMGR" => ClassObjectData::AcMeStateManager(AcMeStateManager {
+            class_version: reader.read_bit_short(),
+        }),
+        "CSACDOCUMENTOPTIONS" => ClassObjectData::CsacDocumentOptions(CsacDocumentOptions {
+            class_version: reader.read_bit_short(),
+            raw_dwg_data: Some(reader.raw_merged_data()),
+            raw_dwg_handle_bits: reader.get_handle_bits(),
+            raw_dwg_version: Some(dxf_version),
+        }),
         _ => return None,
     };
     Some(data)

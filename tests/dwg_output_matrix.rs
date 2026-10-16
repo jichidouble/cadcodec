@@ -78,22 +78,22 @@ fn build_document() -> CadDocument {
     mtxt.insertion_point = Vector3::new(20.0, 20.0, 0.0);
     mtxt.height = 2.5;
     mtxt.value = "Multi\\Pline text".to_string();
-    doc.add_entity(EntityType::MText(mtxt)).unwrap();
+    doc.add_entity(EntityType::MText(Box::new(mtxt))).unwrap();
 
     let dim = DimensionLinear::new(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(dim))).unwrap();
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(dim)))).unwrap();
 
     let insert = Insert::new("WALL", Vector3::new(5.0, 5.0, 0.0));
     doc.add_entity(EntityType::Insert(insert)).unwrap();
 
     doc.add_entity(EntityType::Point(Point::new())).unwrap();
-    doc.add_entity(EntityType::Hatch(Hatch::new())).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(Hatch::new()))).unwrap();
 
     let mut vp = Viewport::new();
     vp.center = Vector3::new(50.0, 50.0, 0.0);
     vp.width = 100.0;
     vp.height = 50.0;
-    doc.add_entity(EntityType::Viewport(vp)).unwrap();
+    doc.add_entity(EntityType::Viewport(Box::new(vp))).unwrap();
 
     doc
 }

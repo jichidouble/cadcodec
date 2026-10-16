@@ -24,6 +24,7 @@
 //!
 //! | DWG Version | AutoCAD | File format  |
 //! |-------------|---------|-------------|
+//! | AC1009      | R12     | Pre-R13     |
 //! | AC1012      | R13     | Linear      |
 //! | AC1014      | R14     | Linear      |
 //! | AC1015      | R2000   | Linear      |
@@ -34,6 +35,7 @@
 //! | AC1032      | R2018   | Paged + LZ77 |
 
 pub mod annotative_eed;
+pub(crate) mod typeface_eed;
 pub mod checksum;
 pub mod compression;
 pub mod compressor_ac21;
@@ -51,12 +53,14 @@ pub mod dwg_writer;
 pub mod eed_codec;
 pub(crate) mod embedded_entity;
 pub mod file_headers;
+mod legacy_viewport;
 mod parallel;
 pub mod preview;
+pub mod r12;
 pub mod reed_solomon;
 
-pub use dwg_reader::DwgReader;
 pub use dwg_reader::DwgReadOptions;
+pub use dwg_reader::DwgReader;
 pub use dwg_reference_type::DwgReferenceType;
 pub use dwg_version::DwgVersion;
 pub use dwg_writer::DwgWriter;

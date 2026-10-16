@@ -19,7 +19,9 @@ fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
 }
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()
@@ -52,14 +54,14 @@ fn sample_helix() -> Helix {
 
 fn roundtrip_helix(via_dwg: bool, version: DxfVersion) -> Helix {
     let mut doc = CadDocument::with_version(version);
-    doc.add_entity(EntityType::Helix(sample_helix())).unwrap();
+    doc.add_entity(EntityType::Helix(Box::new(sample_helix()))).unwrap();
     let rt = if via_dwg {
         dwg_roundtrip(&doc)
     } else {
         dxf_roundtrip(&doc)
     };
     let found = rt.entities().find_map(|e| match e {
-        EntityType::Helix(h) => Some(h.clone()),
+        EntityType::Helix(h) => Some((**h).clone()),
         _ => None,
     });
     found.expect("HELIX missing after roundtrip")

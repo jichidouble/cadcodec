@@ -31,10 +31,7 @@ impl DynamicBlockObject {
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
@@ -90,7 +87,6 @@ pub enum DynamicBlockData {
     LookupAction(BlockLookupAction),
     StretchAction(BlockStretchAction),
     PolarStretchAction(BlockPolarStretchAction),
-    PropertiesTable,
     AlignmentParameterEntity,
     BasePointParameterEntity,
     FlipParameterEntity,
@@ -157,23 +153,13 @@ impl DynamicBlockData {
 
     pub fn entity_cpp_name(&self) -> Option<&'static str> {
         match self {
-            Self::AlignmentParameterEntity => {
-                Some("AcDbBlockAlignmentParameterEntity")
-            }
-            Self::BasePointParameterEntity => {
-                Some("AcDbBlockBasepointParameterEntity")
-            }
+            Self::AlignmentParameterEntity => Some("AcDbBlockAlignmentParameterEntity"),
+            Self::BasePointParameterEntity => Some("AcDbBlockBasepointParameterEntity"),
             Self::FlipParameterEntity => Some("AcDbBlockFlipParameterEntity"),
-            Self::LinearParameterEntity => {
-                Some("AcDbBlockLinearParameterEntity")
-            }
+            Self::LinearParameterEntity => Some("AcDbBlockLinearParameterEntity"),
             Self::PointParameterEntity => Some("AcDbBlockPointParameterEntity"),
-            Self::RotationParameterEntity => {
-                Some("AcDbBlockRotationParameterEntity")
-            }
-            Self::VisibilityParameterEntity => {
-                Some("AcDbBlockVisibilityParameterEntity")
-            }
+            Self::RotationParameterEntity => Some("AcDbBlockRotationParameterEntity"),
+            Self::VisibilityParameterEntity => Some("AcDbBlockVisibilityParameterEntity"),
             Self::XYParameterEntity => Some("AcDbBlockXYParameterEntity"),
             Self::AngularConstraintParameterEntity(_) => {
                 Some("AcDbBlockAngularConstraintParameterEntity")
@@ -188,13 +174,9 @@ impl DynamicBlockData {
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         match self {
             Self::Unknown
-            | Self::PropertiesTable
             | Self::AlignmentParameterEntity
             | Self::BasePointParameterEntity
             | Self::FlipParameterEntity
@@ -267,8 +249,7 @@ impl DynamicBlockData {
             Self::AngularConstraintParameter(value) => {
                 visit_constraint(&mut value.constraint, visit);
             }
-            Self::DiametricConstraintParameter(value)
-            | Self::RadialConstraintParameter(value) => {
+            Self::DiametricConstraintParameter(value) | Self::RadialConstraintParameter(value) => {
                 visit_constraint(&mut value.constraint, visit);
             }
             Self::AlignedConstraintParameter(value)
@@ -303,6 +284,9 @@ impl DynamicBlockData {
                 for handle in &mut value.handles {
                     visit(handle);
                 }
+                for item in &mut value.bindings {
+                    visit(&mut item.handle);
+                }
             }
             Self::AngularConstraintParameterEntity(value) => {
                 visit_constraint(&mut value.constraint, visit);
@@ -320,26 +304,17 @@ impl DynamicBlockData {
     }
 }
 
-fn visit_block_value(
-    value: &mut BlockEvalValue,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_value(value: &mut BlockEvalValue, visit: &mut impl FnMut(&mut Handle)) {
     if let BlockEvalValue::Handle(handle) = value {
         visit(handle);
     }
 }
 
-fn visit_block_eval(
-    value: &mut BlockEvalExpression,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_eval(value: &mut BlockEvalExpression, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_value(&mut value.value, visit);
 }
 
-fn visit_block_element(
-    value: &mut BlockElement,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_element(value: &mut BlockElement, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_eval(&mut value.eval, visit);
 }
 
@@ -357,17 +332,11 @@ fn visit_two_point_parameter(
     visit_block_element(&mut value.parameter.element, visit);
 }
 
-fn visit_block_grip(
-    value: &mut BlockGrip,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_grip(value: &mut BlockGrip, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_element(&mut value.element, visit);
 }
 
-fn visit_block_action(
-    value: &mut BlockAction,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_action(value: &mut BlockAction, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_element(&mut value.element, visit);
     for handle in &mut value.dependencies {
         visit(handle);
@@ -381,18 +350,12 @@ fn visit_action_with_base_point(
     visit_block_action(&mut value.action, visit);
 }
 
-fn visit_constraint(
-    value: &mut BlockConstraintParameter,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_constraint(value: &mut BlockConstraintParameter, visit: &mut impl FnMut(&mut Handle)) {
     visit_two_point_parameter(&mut value.parameter, visit);
     visit(&mut value.dependency);
 }
 
-fn visit_solid_history_base(
-    value: &mut SolidHistoryNodeBase,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_solid_history_base(value: &mut SolidHistoryNodeBase, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_eval(&mut value.eval, visit);
     visit(&mut value.material);
 }
@@ -403,15 +366,16 @@ fn visit_solid_history_operation(
 ) {
     match value {
         SolidHistoryOperation::Unknown => {}
-        SolidHistoryOperation::Box(value)
-        | SolidHistoryOperation::Wedge(value) => {
+        SolidHistoryOperation::Box(value) | SolidHistoryOperation::Wedge(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
         SolidHistoryOperation::Sphere(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
-        SolidHistoryOperation::Cylinder(value)
-        | SolidHistoryOperation::Cone(value) => {
+        SolidHistoryOperation::Cylinder(value) => {
+            visit_solid_history_base(&mut value.base, visit);
+        }
+        SolidHistoryOperation::Cone(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
         SolidHistoryOperation::Pyramid(value) => {
@@ -432,8 +396,7 @@ fn visit_solid_history_operation(
         SolidHistoryOperation::Chamfer(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
-        SolidHistoryOperation::Sweep(value)
-        | SolidHistoryOperation::Extrusion(value) => {
+        SolidHistoryOperation::Sweep(value) | SolidHistoryOperation::Extrusion(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
         SolidHistoryOperation::Loft(value) => {
@@ -445,7 +408,7 @@ fn visit_solid_history_operation(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockEvalExpression {
     pub parent_id: i32,
@@ -454,6 +417,23 @@ pub struct BlockEvalExpression {
     pub value_code: i16,
     pub value: BlockEvalValue,
     pub node_id: i32,
+}
+
+impl BlockEvalExpression {
+    pub const NO_PARENT: i32 = -1;
+}
+
+impl Default for BlockEvalExpression {
+    fn default() -> Self {
+        Self {
+            parent_id: Self::NO_PARENT,
+            major: 0,
+            minor: 0,
+            value_code: 0,
+            value: BlockEvalValue::default(),
+            node_id: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -568,9 +548,9 @@ pub struct BlockAction {
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockActionOffsets {
-    pub offset_x: f64,
-    pub offset_y: f64,
+    pub distance_multiplier: f64,
     pub angle_offset: f64,
+    pub flags: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -690,7 +670,6 @@ pub struct BlockLookupParameter {
     pub index: i32,
     pub lookup_name: String,
     pub lookup_description: String,
-    pub unknown_text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -792,10 +771,14 @@ pub struct BlockArrayAction {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BlockLookupRow {
-    pub connections: [BlockConnection; 3],
-    pub flag_282: bool,
-    pub flag_281: bool,
+pub struct BlockLookupColumn {
+    pub node_id: i32,
+    pub value_type: i32,
+    pub property_type: i32,
+    pub lookup_property: bool,
+    pub unmatched_name: String,
+    pub writable: bool,
+    pub connection_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -805,7 +788,7 @@ pub struct BlockLookupAction {
     pub row_count: i32,
     pub column_count: i32,
     pub expressions: Vec<String>,
-    pub rows: Vec<BlockLookupRow>,
+    pub columns: Vec<BlockLookupColumn>,
     pub flag_280: bool,
 }
 
@@ -841,8 +824,11 @@ pub struct BlockPolarStretchAction {
     pub connections: [BlockConnection; 6],
     pub points: Vec<Vector2>,
     pub handles: Vec<Handle>,
-    pub handle_flags: Vec<i16>,
-    pub codes: Vec<i32>,
+    pub bindings: Vec<BlockStretchHandle>,
+    pub codes: Vec<BlockStretchCode>,
+    pub distance_multiplier: f64,
+    pub angle_offset: f64,
+    pub extra: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -900,23 +886,36 @@ pub struct SolidHistoryNodeBase {
 }
 
 impl SolidHistoryNodeBase {
+    pub const ROOT_PARENT: i32 = BlockEvalExpression::NO_PARENT;
+    pub const NO_VALUE: i16 = -9999;
+
     pub fn new(step_id: i32) -> Self {
         Self {
             eval: BlockEvalExpression {
+                parent_id: Self::ROOT_PARENT,
                 major: 1,
+                value_code: Self::NO_VALUE,
                 node_id: step_id,
                 ..BlockEvalExpression::default()
             },
             major: 1,
             transform: [
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
             step_id,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn saved_eval(&self) -> BlockEvalExpression {
+        let mut eval = self.eval.clone();
+        if eval.parent_id == 0 {
+            eval.parent_id = Self::ROOT_PARENT;
+        }
+        if eval.value_code == 0 && eval.value == BlockEvalValue::None {
+            eval.value_code = Self::NO_VALUE;
+        }
+        eval
     }
 }
 
@@ -929,7 +928,7 @@ pub enum SolidHistoryOperation {
     Wedge(SolidHistoryBox),
     Sphere(SolidHistorySphere),
     Cylinder(SolidHistoryCylinder),
-    Cone(SolidHistoryCylinder),
+    Cone(SolidHistoryCone),
     Pyramid(SolidHistoryPyramid),
     Torus(SolidHistoryTorus),
     Boolean(SolidHistoryBoolean),
@@ -948,7 +947,8 @@ impl SolidHistoryOperation {
             Self::Unknown => None,
             Self::Box(value) | Self::Wedge(value) => Some(&value.base),
             Self::Sphere(value) => Some(&value.base),
-            Self::Cylinder(value) | Self::Cone(value) => Some(&value.base),
+            Self::Cylinder(value) => Some(&value.base),
+            Self::Cone(value) => Some(&value.base),
             Self::Pyramid(value) => Some(&value.base),
             Self::Torus(value) => Some(&value.base),
             Self::Boolean(value) => Some(&value.base),
@@ -966,7 +966,8 @@ impl SolidHistoryOperation {
             Self::Unknown => None,
             Self::Box(value) | Self::Wedge(value) => Some(&mut value.base),
             Self::Sphere(value) => Some(&mut value.base),
-            Self::Cylinder(value) | Self::Cone(value) => Some(&mut value.base),
+            Self::Cylinder(value) => Some(&mut value.base),
+            Self::Cone(value) => Some(&mut value.base),
             Self::Pyramid(value) => Some(&mut value.base),
             Self::Torus(value) => Some(&mut value.base),
             Self::Boolean(value) => Some(&mut value.base),
@@ -1031,6 +1032,23 @@ pub struct SolidHistoryCylinder {
     pub major_radius: f64,
     pub minor_radius: f64,
     pub x_radius: f64,
+}
+
+/// Parametric cone or frustum history.
+///
+/// The three stored radii are the two base semi-axes and the top major
+/// radius. Keeping this separate from cylinder history prevents the top
+/// radius from being mistaken for a third copy of the base radius.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SolidHistoryCone {
+    pub base: SolidHistoryNodeBase,
+    pub operation_major: i32,
+    pub operation_minor: i32,
+    pub height: f64,
+    pub base_x_radius: f64,
+    pub base_y_radius: f64,
+    pub top_radius: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1101,7 +1119,7 @@ pub struct SolidHistoryChamfer {
     pub base_face: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SolidHistorySweep {
     pub base: SolidHistoryNodeBase,
@@ -1121,10 +1139,46 @@ pub struct SolidHistorySweep {
     pub align_option: u8,
     pub miter_option: u8,
     pub has_align_start: bool,
+    pub align_start: bool,
     pub bank: bool,
-    pub check_intersections: bool,
     pub flags_294_296: [bool; 3],
     pub reference_point: Vector3,
+    #[cfg_attr(feature = "serde", serde(default = "unit_xyz"))]
+    pub dwg_vector: Vector3,
+}
+
+#[cfg(feature = "serde")]
+fn unit_xyz() -> Vector3 {
+    Vector3::new(1.0, 1.0, 1.0)
+}
+
+impl Default for SolidHistorySweep {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+            operation_major: 0,
+            operation_minor: 0,
+            direction: Vector3::ZERO,
+            sweep_entity: None,
+            path_entity: None,
+            draft_angle: 0.0,
+            start_draft_distance: 0.0,
+            end_draft_distance: 0.0,
+            scale_factor: 0.0,
+            twist_angle: 0.0,
+            align_angle: 0.0,
+            sweep_entity_transform: [0.0; 16],
+            path_entity_transform: [0.0; 16],
+            align_option: 0,
+            miter_option: 0,
+            has_align_start: false,
+            align_start: true,
+            bank: false,
+            flags_294_296: [false; 3],
+            reference_point: Vector3::ZERO,
+            dwg_vector: Vector3::new(1.0, 1.0, 1.0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1135,6 +1189,109 @@ pub struct SolidHistoryLoft {
     pub operation_minor: i32,
     pub cross_sections: Vec<crate::entities::EmbeddedEntity>,
     pub guides: Vec<crate::entities::EmbeddedEntity>,
+    /// Optional construction settings retained in a versioned extension record.
+    /// The native history stream remains unchanged for other consumers.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub parameters: Option<SolidHistoryLoftParameters>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub path_entity: Option<crate::entities::EmbeddedEntity>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub options: SolidHistoryLoftOptions,
+}
+
+impl SolidHistoryLoft {
+    pub(crate) fn native(
+        &self,
+    ) -> (
+        Option<&crate::entities::EmbeddedEntity>,
+        SolidHistoryLoftOptions,
+    ) {
+        let mut options = self.options.clone();
+        let Some(parameters) = &self.parameters else {
+            return (self.path_entity.as_ref(), options);
+        };
+        options.start_draft_angle = parameters.start_draft_angle;
+        options.end_draft_angle = parameters.end_draft_angle;
+        options.start_magnitude = parameters.start_magnitude;
+        options.end_magnitude = parameters.end_magnitude;
+        (
+            parameters.path_entity.as_ref().or(self.path_entity.as_ref()),
+            options,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
+pub struct SolidHistoryLoftOptions {
+    pub surface_option: i32,
+    pub start_draft_angle: f64,
+    pub end_draft_angle: f64,
+    pub start_magnitude: f64,
+    pub end_magnitude: f64,
+    pub flags: [bool; 8],
+}
+
+impl Default for SolidHistoryLoftOptions {
+    fn default() -> Self {
+        Self {
+            surface_option: 0,
+            start_draft_angle: std::f64::consts::FRAC_PI_2,
+            end_draft_angle: std::f64::consts::FRAC_PI_2,
+            start_magnitude: 0.0,
+            end_magnitude: 0.0,
+            flags: [false, true, true, true, false, true, false, true],
+        }
+    }
+}
+
+/// Parametric loft settings. Angles are radians; magnitudes are nonnegative.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
+pub struct SolidHistoryLoftParameters {
+    pub path_entity: Option<crate::entities::EmbeddedEntity>,
+    /// 0 ruled, 1 smooth, 2 first, 3 last, 4 ends, 5 all, 6 draft angles.
+    pub normals: i32,
+    pub start_draft_angle: f64,
+    pub end_draft_angle: f64,
+    pub start_magnitude: f64,
+    pub end_magnitude: f64,
+    /// Continuity and dimensionless bulge at point ends only.
+    pub start_continuity: i32,
+    pub end_continuity: i32,
+    pub start_bulge: f64,
+    pub end_bulge: f64,
+    pub closed: bool,
+    pub periodic: bool,
+    pub surface: bool,
+    pub align_direction: bool,
+    /// Number of embedded members in each joined cross section. Empty means
+    /// one independent section per embedded entity.
+    pub section_counts: Vec<usize>,
+}
+
+impl Default for SolidHistoryLoftParameters {
+    fn default() -> Self {
+        Self {
+            path_entity: None,
+            normals: 1,
+            start_draft_angle: std::f64::consts::FRAC_PI_2,
+            end_draft_angle: std::f64::consts::FRAC_PI_2,
+            start_magnitude: 0.0,
+            end_magnitude: 0.0,
+            start_continuity: 1,
+            end_continuity: 1,
+            start_bulge: 0.5,
+            end_bulge: 0.5,
+            closed: false,
+            periodic: true,
+            surface: false,
+            align_direction: true,
+            section_counts: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1144,7 +1301,7 @@ pub struct SolidHistoryRevolve {
     pub operation_major: i32,
     pub operation_minor: i32,
     pub axis_point: Vector3,
-    pub direction: Vector2,
+    pub direction: Vector3,
     pub revolve_angle: f64,
     pub start_angle: f64,
     pub draft_angle: f64,

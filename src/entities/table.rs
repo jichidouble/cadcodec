@@ -644,6 +644,11 @@ pub struct CellContent {
 }
 
 impl CellContent {
+    pub fn sets(&self, property: CellStylePropertyFlags) -> bool {
+        let bits = (self.format_property_flags | self.format_override_flags) as u32;
+        bits & property.bits() == property.bits()
+    }
+
     /// Creates empty cell content.
     pub fn new() -> Self {
         Self {
@@ -767,6 +772,8 @@ pub struct CellStyle {
     pub property_flags: CellStylePropertyFlags,
     /// Complete style override flag word.
     pub override_flags: i32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub legacy_override_bits: bool,
     /// Nested content-format metadata.
     pub content_format_override_flags: i32,
     pub content_property_flags: i32,
@@ -819,12 +826,25 @@ pub struct CellStyle {
 }
 
 impl CellStyle {
+    pub fn overridden(&self) -> CellStylePropertyFlags {
+        if self.legacy_override_bits {
+            self.property_flags
+        } else {
+            self.property_flags | CellStylePropertyFlags::from_bits_truncate(self.override_flags as u32)
+        }
+    }
+
+    pub fn sets(&self, property: CellStylePropertyFlags) -> bool {
+        self.overridden().contains(property)
+    }
+
     /// Creates a default cell style.
     pub fn new() -> Self {
         Self {
             style_type: CellStyleType::Cell,
             property_flags: CellStylePropertyFlags::NONE,
             override_flags: 0,
+            legacy_override_bits: false,
             content_format_override_flags: 0,
             content_property_flags: 0,
             value_data_type: 0,
@@ -1012,15 +1032,95 @@ impl TableCell {
 
     /// Gets the text value of the first content.
     pub fn text_value(&self) -> &str {
-        self.contents.first()
+        self.contents
+            .first()
             .map(|c| c.value.display())
             .unwrap_or("")
     }
 
-    /// Sets the text value.
+    pub fn binary_layout(&self) -> std::borrow::Cow<'_, TableCell> {
+        use CellStylePropertyFlags as P;
+        const CONTENT: P = P::TEXT_HEIGHT.union(P::TEXT_STYLE).union(P::CONTENT_COLOR);
+        let legacy = self.style.as_ref().is_some_and(|s| s.legacy_override_bits);
+        if !legacy {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let own = self.style.clone();
+        let untyped = self.contents.iter().any(|c| c.format_value_data_type == 0);
+        if own.is_none() && !untyped {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut cell = self.clone();
+        for content in &mut cell.contents {
+            if content.format_value_data_type == 0 {
+                if content.value.text.is_empty() && content.field_handle.is_none() {
+                    content.format_value_data_type = 512;
+                } else {
+                    content.format_value_data_type = 4;
+                    content.format_override_flags |= 3;
+                }
+            }
+        }
+        if let Some(own) = own {
+            let p = own.overridden();
+            for content in &mut cell.contents {
+                if p.contains(P::TEXT_HEIGHT) {
+                    content.format_override_flags |= P::TEXT_HEIGHT.bits() as i32;
+                    content.text_height = own.text_height;
+                }
+                if p.contains(P::TEXT_STYLE) {
+                    content.format_override_flags |= P::TEXT_STYLE.bits() as i32;
+                    content.text_style_handle = own.text_style_handle;
+                    content.text_style_name = own.text_style_name.clone();
+                }
+                if p.contains(P::CONTENT_COLOR) {
+                    content.format_override_flags |= P::CONTENT_COLOR.bits() as i32;
+                    content.color = own.content_color;
+                }
+            }
+            if let Some(style) = cell.style.as_mut() {
+                if p.contains(P::BACKGROUND_COLOR) && !style.fill_enabled {
+                    style.background_color = Color::ByBlock;
+                }
+                for (color_bit, weight_bit, edge, border) in [
+                    (0x40, 0x400, CellEdgeFlags::TOP, &mut style.top_border),
+                    (0x80, 0x800, CellEdgeFlags::RIGHT, &mut style.right_border),
+                    (0x100, 0x1000, CellEdgeFlags::BOTTOM, &mut style.bottom_border),
+                    (0x200, 0x2000, CellEdgeFlags::LEFT, &mut style.left_border),
+                ] {
+                    if own.override_flags & color_bit != 0 {
+                        border.override_flags |= BorderPropertyFlags::COLOR;
+                    }
+                    if own.override_flags & weight_bit != 0 {
+                        border.override_flags |=
+                            BorderPropertyFlags::LINE_WEIGHT | BorderPropertyFlags::INVISIBILITY;
+                    }
+                    if own.override_flags & (color_bit | weight_bit) != 0 {
+                        style.applied_border_edges |= edge;
+                    }
+                }
+                style.override_flags = (p & !CONTENT).bits() as i32;
+                style.property_flags = P::NONE;
+                style.legacy_override_bits = false;
+            }
+        }
+        std::borrow::Cow::Owned(cell)
+    }
+
     pub fn set_text(&mut self, s: &str) {
+        // Typed text keeps the content's format and is stored as a string
+        // value with the flags the reference writes for typed text (6).
+        let mut content = self
+            .contents
+            .first()
+            .filter(|c| c.content_type == TableCellContentType::Value)
+            .cloned()
+            .unwrap_or_else(|| CellContent::text(s));
+        content.value = CellValue::text(s);
+        content.value.flags = 6;
+        content.field_handle = None;
         self.contents.clear();
-        self.contents.push(CellContent::text(s));
+        self.contents.push(content);
         self.cell_type = CellType::Text;
     }
 
@@ -1235,8 +1335,10 @@ impl CellRange {
 
     /// Returns true if this range contains the given cell.
     pub fn contains(&self, row: usize, col: usize) -> bool {
-        row >= self.top_row && row <= self.bottom_row &&
-        col >= self.left_col && col <= self.right_col
+        row >= self.top_row
+            && row <= self.bottom_row
+            && col >= self.left_col
+            && col <= self.right_col
     }
 }
 
@@ -1391,32 +1493,27 @@ pub struct Table {
     pub dwg_unknown_byte: u8,
     pub dwg_unknown_handle: Option<Handle>,
     pub dwg_unknown_long1: i32,
+    /// R2010-only header bit. New tables use the native default `true`.
+    /// Kept separate from the R2013+ long, whose native default is zero.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dwg_r2010_unknown_bit: Option<bool>,
     pub dwg_unknown_long2: i32,
     pub dwg_unknown_short: i16,
 }
 
-fn visit_table_value_handles(
-    value: &mut CellValue,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_value_handles(value: &mut CellValue, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.handle_value.as_mut() {
         visit(handle);
     }
 }
 
-fn visit_table_border_handles(
-    value: &mut CellBorder,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_border_handles(value: &mut CellBorder, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.line_type_handle.as_mut() {
         visit(handle);
     }
 }
 
-fn visit_table_style_handles(
-    value: &mut CellStyle,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_style_handles(value: &mut CellStyle, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.text_style_handle.as_mut() {
         visit(handle);
     }
@@ -1438,10 +1535,7 @@ fn visit_table_custom_data_handles(
     }
 }
 
-fn visit_table_cell_handles(
-    value: &mut TableCell,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_cell_handles(value: &mut TableCell, visit: &mut impl FnMut(&mut Handle)) {
     for content in &mut value.contents {
         visit_table_value_handles(&mut content.value, visit);
         if let Some(handle) = content.block_handle.as_mut() {
@@ -1473,10 +1567,101 @@ fn visit_table_cell_handles(
 }
 
 impl Table {
-    pub(crate) fn visit_object_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub fn sync_merged_ranges_from_cells(&mut self) {
+        let ranges = self.canonical_merged_ranges();
+        self.merged_ranges = ranges;
+    }
+
+    pub(crate) fn sync_cells_from_merged_ranges(&mut self) {
+        let ranges = self.canonical_merged_ranges();
+        self.set_merged_ranges(ranges);
+    }
+
+    pub(crate) fn canonical_merged_ranges(&self) -> Vec<CellRange> {
+        let row_count = self.rows.len();
+        let column_count = self.columns.len();
+        if row_count == 0 || column_count == 0 {
+            return Vec::new();
+        }
+
+        let mut ranges = Vec::new();
+        for range in &self.merged_ranges {
+            if range.top_row >= row_count
+                || range.left_col >= column_count
+                || range.top_row > range.bottom_row
+                || range.left_col > range.right_col
+            {
+                continue;
+            }
+            let range = CellRange {
+                top_row: range.top_row,
+                left_col: range.left_col,
+                bottom_row: range.bottom_row.min(row_count - 1),
+                right_col: range.right_col.min(column_count - 1),
+            };
+            if range.cell_count() > 1 && !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+        for (row_index, row) in self.rows.iter().enumerate() {
+            for (column_index, cell) in row.cells.iter().take(column_count).enumerate() {
+                let height = cell.merge_height.max(1) as usize;
+                let width = cell.merge_width.max(1) as usize;
+                if height == 1 && width == 1 {
+                    continue;
+                }
+                let range = CellRange {
+                    top_row: row_index,
+                    left_col: column_index,
+                    bottom_row: row_index.saturating_add(height - 1).min(row_count - 1),
+                    right_col: column_index.saturating_add(width - 1).min(column_count - 1),
+                };
+                if range.cell_count() > 1 && !ranges.contains(&range) {
+                    ranges.push(range);
+                }
+            }
+        }
+        ranges
+    }
+
+    fn set_merged_ranges(&mut self, ranges: Vec<CellRange>) {
+        for row in &mut self.rows {
+            for cell in &mut row.cells {
+                cell.merge_width = 1;
+                cell.merge_height = 1;
+                cell.merged = 0;
+            }
+        }
+        self.merged_ranges = ranges;
+        for range in &self.merged_ranges {
+            for row in self
+                .rows
+                .iter_mut()
+                .take(range.bottom_row + 1)
+                .skip(range.top_row)
+            {
+                for cell in row
+                    .cells
+                    .iter_mut()
+                    .take(range.right_col + 1)
+                    .skip(range.left_col)
+                {
+                    cell.merged = 1;
+                }
+            }
+            if let Some(cell) = self
+                .rows
+                .get_mut(range.top_row)
+                .and_then(|row| row.cells.get_mut(range.left_col))
+            {
+                cell.merged = 0;
+                cell.merge_width = range.col_count() as i32;
+                cell.merge_height = range.row_count() as i32;
+            }
+        }
+    }
+
+    pub(crate) fn visit_object_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         if let Some(handle) = self.common.linetype_handle.as_mut() {
             visit(handle);
         }
@@ -1520,10 +1705,7 @@ impl Table {
             if let Some(style) = row.style.as_mut() {
                 visit_table_style_handles(style, visit);
             }
-            visit_table_custom_data_handles(
-                &mut row.custom_data_items,
-                visit,
-            );
+            visit_table_custom_data_handles(&mut row.custom_data_items, visit);
             for cell in &mut row.cells {
                 visit_table_cell_handles(cell, visit);
             }
@@ -1532,10 +1714,7 @@ impl Table {
             if let Some(style) = column.style.as_mut() {
                 visit_table_style_handles(style, visit);
             }
-            visit_table_custom_data_handles(
-                &mut column.custom_data_items,
-                visit,
-            );
+            visit_table_custom_data_handles(&mut column.custom_data_items, visit);
         }
         for handle in &mut self.field_handles {
             visit(handle);
@@ -1586,6 +1765,7 @@ impl Table {
             dwg_unknown_byte: 0,
             dwg_unknown_handle: None,
             dwg_unknown_long1: 0,
+            dwg_r2010_unknown_bit: None,
             dwg_unknown_long2: 0,
             dwg_unknown_short: 38,
         }
@@ -1670,24 +1850,90 @@ impl Table {
     pub fn insert_row(&mut self, index: usize) {
         let num_cols = self.columns.len();
         if index <= self.rows.len() {
+            let ranges = self
+                .canonical_merged_ranges()
+                .into_iter()
+                .map(|mut range| {
+                    if index <= range.top_row {
+                        range.top_row += 1;
+                        range.bottom_row += 1;
+                    } else if index <= range.bottom_row {
+                        range.bottom_row += 1;
+                    }
+                    range
+                })
+                .collect();
             self.rows.insert(index, TableRow::new(num_cols));
+            for range in &mut self.break_ranges {
+                if index as i32 <= range.start_row {
+                    range.start_row += 1;
+                    range.end_row += 1;
+                } else if index as i32 <= range.end_row {
+                    range.end_row += 1;
+                }
+            }
+            self.set_merged_ranges(ranges);
         }
     }
 
     /// Inserts a column at the given index.
     pub fn insert_column(&mut self, index: usize, width: f64) {
         if index <= self.columns.len() {
+            let ranges = self
+                .canonical_merged_ranges()
+                .into_iter()
+                .map(|mut range| {
+                    if index <= range.left_col {
+                        range.left_col += 1;
+                        range.right_col += 1;
+                    } else if index <= range.right_col {
+                        range.right_col += 1;
+                    }
+                    range
+                })
+                .collect();
             self.columns.insert(index, TableColumn::with_width(width));
             for row in &mut self.rows {
                 row.cells.insert(index, TableCell::new());
             }
+            self.set_merged_ranges(ranges);
         }
     }
 
     /// Removes a row.
     pub fn remove_row(&mut self, index: usize) -> Option<TableRow> {
         if index < self.rows.len() {
-            Some(self.rows.remove(index))
+            let ranges = self
+                .canonical_merged_ranges()
+                .into_iter()
+                .filter_map(|mut range| {
+                    if index < range.top_row {
+                        range.top_row -= 1;
+                        range.bottom_row -= 1;
+                    } else if index <= range.bottom_row {
+                        if range.top_row == range.bottom_row {
+                            return None;
+                        }
+                        range.bottom_row -= 1;
+                    }
+                    (range.cell_count() > 1).then_some(range)
+                })
+                .collect();
+            let removed = self.rows.remove(index);
+            self.break_ranges.retain_mut(|range| {
+                if (index as i32) < range.start_row {
+                    range.start_row -= 1;
+                    range.end_row -= 1;
+                } else if index as i32 <= range.end_row {
+                    if range.start_row == range.end_row {
+                        return false;
+                    }
+                    range.end_row -= 1;
+                }
+                true
+            });
+            self.set_merged_ranges(ranges);
+            Some(removed)
         } else {
             None
         }
@@ -1696,12 +1942,29 @@ impl Table {
     /// Removes a column.
     pub fn remove_column(&mut self, index: usize) -> Option<TableColumn> {
         if index < self.columns.len() {
+            let ranges = self
+                .canonical_merged_ranges()
+                .into_iter()
+                .filter_map(|mut range| {
+                    if index < range.left_col {
+                        range.left_col -= 1;
+                        range.right_col -= 1;
+                    } else if index <= range.right_col {
+                        if range.left_col == range.right_col {
+                            return None;
+                        }
+                        range.right_col -= 1;
+                    }
+                    (range.cell_count() > 1).then_some(range)
+                })
+                .collect();
             let col = self.columns.remove(index);
             for row in &mut self.rows {
                 if index < row.cells.len() {
                     row.cells.remove(index);
                 }
             }
+            self.set_merged_ranges(ranges);
             Some(col)
         } else {
             None
@@ -1710,18 +1973,33 @@ impl Table {
 
     /// Merges cells in the given range.
     pub fn merge_cells(&mut self, range: CellRange) {
-        if let Some(cell) = self.cell_mut(range.top_row, range.left_col) {
-            cell.merge_width = range.col_count() as i32;
-            cell.merge_height = range.row_count() as i32;
+        if range.top_row > range.bottom_row
+            || range.left_col > range.right_col
+            || range.bottom_row >= self.rows.len()
+            || range.right_col >= self.columns.len()
+            || range.cell_count() <= 1
+        {
+            return;
         }
+        let mut ranges = self.canonical_merged_ranges();
+        ranges.retain(|current| {
+            current.bottom_row < range.top_row
+                || current.top_row > range.bottom_row
+                || current.right_col < range.left_col
+                || current.left_col > range.right_col
+        });
+        ranges.push(range);
+        self.set_merged_ranges(ranges);
     }
 
     /// Unmerges a cell.
     pub fn unmerge_cell(&mut self, row: usize, col: usize) {
-        if let Some(cell) = self.cell_mut(row, col) {
-            cell.merge_width = 1;
-            cell.merge_height = 1;
-        }
+        let ranges = self
+            .canonical_merged_ranges()
+            .into_iter()
+            .filter(|range| !range.contains(row, col))
+            .collect();
+        self.set_merged_ranges(ranges);
     }
 
     /// Sets uniform row height for all rows.
@@ -1804,13 +2082,32 @@ impl Entity for Table {
     }
 
     fn bounding_box(&self) -> BoundingBox3D {
-        let min = self.insertion_point;
-        let max = Vector3::new(
-            min.x + self.total_width(),
-            min.y + self.total_height(),
-            min.z,
-        );
-        BoundingBox3D::new(min, max)
+        let horizontal = if self.horizontal_direction.length() > 1.0e-12 {
+            self.horizontal_direction.normalize()
+        } else {
+            Vector3::UNIT_X
+        };
+        let normal = if self.normal.length() > 1.0e-12 {
+            self.normal.normalize()
+        } else {
+            Vector3::UNIT_Z
+        };
+        let down = {
+            let candidate = horizontal.cross(&normal);
+            if candidate.length() > 1.0e-12 {
+                candidate.normalize()
+            } else {
+                Vector3::new(0.0, -1.0, 0.0)
+            }
+        };
+        let width = self.total_width();
+        let height = self.total_height();
+        let p0 = self.insertion_point;
+        let p1 = p0 + horizontal * width;
+        let p2 = p0 + down * height;
+        let p3 = p1 + down * height;
+        BoundingBox3D::from_points(&[p0, p1, p2, p3])
+            .unwrap_or_else(|| BoundingBox3D::from_point(self.insertion_point))
     }
 
     fn translate(&mut self, offset: Vector3) {
@@ -1820,7 +2117,7 @@ impl Entity for Table {
     fn entity_type(&self) -> &'static str {
         "ACAD_TABLE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_table(self, transform);
     }
@@ -2015,11 +2312,15 @@ mod tests {
         table.set_uniform_row_height(1.0);
         table.set_uniform_column_width(2.0);
 
+        // The insertion point is the table's top-left corner: with the
+        // default horizontal (+X) and normal (+Z), rows flow downward (-Y),
+        // so the box spans y in [insert.y - height, insert.y] and
+        // x in [insert.x, insert.x + width].
         let bbox = table.bounding_box();
         assert_eq!(bbox.min.x, 5.0);
-        assert_eq!(bbox.min.y, 10.0);
         assert_eq!(bbox.max.x, 11.0); // 5 + 3*2
-        assert_eq!(bbox.max.y, 12.0); // 10 + 2*1
+        assert_eq!(bbox.max.y, 10.0); // insertion point = top edge
+        assert_eq!(bbox.min.y, 8.0); // 10 - 2*1
     }
 
     #[test]
@@ -2087,4 +2388,41 @@ mod tests {
         assert!(flags.contains(CellStateFlags::CONTENT_LOCKED));
         assert!(!flags.contains(CellStateFlags::LINKED));
     }
+}
+
+pub fn legacy_override_properties(flags: i32) -> CellStylePropertyFlags {
+    let mut properties = CellStylePropertyFlags::NONE;
+    for (bit, property) in [
+        (0x01, CellStylePropertyFlags::ALIGNMENT),
+        (0x02, CellStylePropertyFlags::BACKGROUND_COLOR),
+        (0x04, CellStylePropertyFlags::BACKGROUND_COLOR),
+        (0x08, CellStylePropertyFlags::CONTENT_COLOR),
+        (0x10, CellStylePropertyFlags::TEXT_STYLE),
+        (0x20, CellStylePropertyFlags::TEXT_HEIGHT),
+    ] {
+        if flags & bit != 0 {
+            properties |= property;
+        }
+    }
+    properties
+}
+
+pub fn cell_override_bit(code: i32) -> Option<i32> {
+    Some(match code {
+        170 => 0x01,
+        283 => 0x02,
+        63 => 0x04,
+        64 => 0x08,
+        7 => 0x10,
+        140 => 0x20,
+        69 => 0x40,
+        65 => 0x80,
+        66 => 0x100,
+        68 => 0x200,
+        279 | 289 => 0x400,
+        275 | 285 => 0x800,
+        276 | 286 => 0x1000,
+        278 | 288 => 0x2000,
+        _ => return None,
+    })
 }

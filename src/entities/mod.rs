@@ -12,149 +12,146 @@
 
 use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3};
 
-pub mod point;
-pub mod line;
-pub mod circle;
+pub mod acis;
 pub mod arc;
-pub mod ellipse;
-pub mod polyline;
-pub mod polyline3d;
-pub mod lwpolyline;
-pub mod text;
-pub mod mtext;
-pub mod mtext_format;
-pub mod spline;
-pub mod helix;
-pub mod dimension;
-pub mod hatch;
-pub mod solid;
-pub mod face3d;
-pub mod insert;
-pub mod block;
-pub mod ray;
-pub mod xline;
-pub mod viewport;
 pub mod attribute_definition;
 pub mod attribute_entity;
+pub mod block;
+pub mod centerline;
+pub mod circle;
+pub mod dimension;
+pub mod ellipse;
+pub mod embedded_entity;
+pub mod explode;
+pub mod extended_entity;
+pub mod face3d;
+pub mod hatch;
+pub mod helix;
+pub mod insert;
 pub mod leader;
-pub mod multileader;
-pub mod mline;
+pub mod light;
+pub mod line;
+pub mod lwpolyline;
 pub mod mesh;
-pub mod raster_image;
-pub mod solid3d;
-pub mod surface;
-pub mod acis;
-pub mod table;
-pub mod tolerance;
-pub mod polyface_mesh;
-pub mod wipeout;
-pub mod shape;
-pub mod underlay;
-pub mod seqend;
+pub mod mirror;
+pub mod mline;
+pub mod mtext;
+pub mod mtext_format;
+pub mod multileader;
 pub mod ole2frame;
 pub mod ole_presentation;
+pub mod point;
+pub mod polyface_mesh;
 pub mod polygon_mesh;
-pub mod light;
-pub mod section_symbol;
+pub mod polyline;
+pub mod polyline3d;
 pub mod proxy_graphics;
+pub mod raster_image;
+pub mod ray;
+pub mod section_symbol;
+pub mod seqend;
+pub mod shape;
+pub mod solid;
+pub mod solid3d;
+pub mod spline;
+pub mod surface;
+pub mod table;
+pub mod text;
+pub mod tolerance;
+pub mod transform;
+pub mod translate;
+pub mod underlay;
 pub mod unknown_entity;
 pub mod view_border;
-pub mod extended_entity;
-pub mod explode;
-pub mod translate;
-pub mod transform;
-pub mod mirror;
-pub mod embedded_entity;
+pub mod viewport;
+pub mod wipeout;
+pub mod xline;
 
-pub use point::Point;
-pub use line::Line;
-pub use circle::Circle;
 pub use arc::Arc;
-pub use ellipse::Ellipse;
-pub use polyline::{Polyline, Polyline2D, Vertex2D, Vertex3D, PolylineFlags, VertexFlags, SmoothSurfaceType};
-pub use polyline3d::{Polyline3D, Vertex3DPolyline, Polyline3DFlags};
-pub use lwpolyline::{LwPolyline, LwVertex};
-pub use text::{Text, TextHorizontalAlignment, TextVerticalAlignment};
-pub use mtext::{MText, MTextColumnData, AttachmentPoint, DrawingDirection};
-pub use spline::{Spline, SplineFlags};
-pub use helix::{Helix, HelixConstraint};
-pub use dimension::*;
-pub use hatch::*;
-pub use solid::Solid;
-pub use face3d::{Face3D, InvisibleEdgeFlags};
-pub use insert::Insert;
-pub use block::{Block, BlockEnd};
-pub use ray::Ray;
-pub use xline::XLine;
-pub use viewport::{Viewport, ViewportStatusFlags, ViewportRenderMode, StandardView, GridFlags};
-pub use attribute_definition::{AttributeDefinition, AttributeFlags, HorizontalAlignment, VerticalAlignment, MTextFlag};
+pub use attribute_definition::{
+    AttributeDefinition, AttributeFlags, HorizontalAlignment, MTextFlag, VerticalAlignment,
+};
 pub use attribute_entity::AttributeEntity;
-pub use leader::{Leader, LeaderPathType, LeaderCreationType, HooklineDirection};
-pub use multileader::{
-    MultiLeader, MultiLeaderBuilder, MultiLeaderAnnotContext,
-    LeaderRoot, LeaderLine, BlockAttribute, MultiLeaderArrowheadOverride,
-    StartEndPointPair,
-    LeaderContentType, MultiLeaderPathType, TextAttachmentType, TextAngleType,
-    BlockContentConnectionType, TextAttachmentDirectionType, TextAttachmentPointType,
-    TextAlignmentType, FlowDirectionType, LineSpacingStyle,
-    MultiLeaderPropertyOverrideFlags, LeaderLinePropertyOverrideFlags,
+pub use block::{Block, BlockEnd};
+pub use centerline::{
+    CenterLineAssociation, CenterLineSource, CenterLineSourceKind, CenterMarkAssociation,
+    CenterMarkSource, CenterMarkSourceKind, CENTERLINE_XDATA_APPLICATION,
+    CENTERMARK_XDATA_APPLICATION,
 };
-pub use mline::{
-    MLine, MLineBuilder, MLineVertex, MLineSegment,
-    MLineStyle, MLineStyleElement, MLineJustification, MLineFlags, MLineStyleFlags,
-};
+pub use circle::Circle;
+pub use dimension::*;
+pub use ellipse::Ellipse;
+pub use embedded_entity::EmbeddedEntity;
+pub use extended_entity::*;
+pub use face3d::{Face3D, InvisibleEdgeFlags};
+pub use hatch::*;
+pub use helix::{Helix, HelixConstraint};
+pub use insert::Insert;
+pub use leader::{HooklineDirection, Leader, LeaderCreationType, LeaderPathType};
+pub use light::{Light, LightPhotometricData};
+pub use line::Line;
+pub use lwpolyline::{LwPolyline, LwVertex};
 pub use mesh::{Mesh, MeshBuilder, MeshEdge, MeshFace};
-pub use raster_image::{
-    RasterImage, RasterImageBuilder, ImageDefinition, ClipBoundary,
-    ClipMode, ClipType, ImageDisplayFlags, ImageDisplayQuality, ResolutionUnit,
+pub use mline::{
+    MLine, MLineBuilder, MLineFlags, MLineJustification, MLineSegment, MLineStyle,
+    MLineStyleElement, MLineStyleFlags, MLineVertex,
 };
-pub use solid3d::{
-    Solid3D, Region, Body, Wire, Silhouette, AcisData, AcisMaterial,
-    WireType, AcisVersion,
+pub use mtext::{AttachmentPoint, DrawingDirection, MText, MTextColumnData};
+pub use multileader::{
+    BlockAttribute, BlockContentConnectionType, FlowDirectionType, LeaderContentType, LeaderLine,
+    LeaderLinePropertyOverrideFlags, LeaderRoot, LineSpacingStyle, MultiLeader,
+    MultiLeaderAnnotContext, MultiLeaderArrowheadOverride, MultiLeaderBuilder, MultiLeaderPathType,
+    MultiLeaderPropertyOverrideFlags, StartEndPointPair, TextAlignmentType, TextAngleType,
+    TextAttachmentDirectionType, TextAttachmentPointType, TextAttachmentType,
 };
-pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceSweepOptions};
-pub use table::{
-    Table, TableBuilder, TableCell, TableRow, TableColumn,
-    CellContent, CellValue, CellStyle, CellBorder, CellRange,
-    CellType, CellValueType, ValueUnitType, BorderType,
-    TableCellContentType, CellStyleType, BreakFlowDirection,
-    CellEdgeFlags, CellStateFlags, CellStylePropertyFlags,
-    BorderPropertyFlags, ContentLayoutFlags, BreakOptionFlags,
-    TableAttribute, CellContentGeometry, TableCustomData,
-    TableBreakData, TableBreakRange, LegacyTableStyleOverride,
-    LegacyBorderOverrides,
-};
-pub use tolerance::{Tolerance, gdt_symbols};
-pub use polyface_mesh::{
-    PolyfaceMesh, PolyfaceVertex, PolyfaceFace,
-    PolyfaceMeshFlags, PolyfaceVertexFlags, PolyfaceSmoothType,
-};
-pub use wipeout::{
-    Wipeout, WipeoutDisplayFlags, WipeoutClipType, WipeoutClipMode,
-};
-pub use shape::{Shape, standard_shapes, gdt_shapes};
-pub use underlay::{
-    Underlay, UnderlayDefinition, UnderlayType, UnderlayDisplayFlags,
-    PdfUnderlay, DwfUnderlay, DgnUnderlay,
-    PdfUnderlayDefinition, DwfUnderlayDefinition, DgnUnderlayDefinition,
-};
-pub use seqend::Seqend;
 pub use ole2frame::{Ole2Frame, OleFrameEnvelope, OleObjectType};
 pub use ole_presentation::{extract_presentation, OlePresentation};
+pub use point::Point;
+pub use polyface_mesh::{
+    PolyfaceFace, PolyfaceMesh, PolyfaceMeshFlags, PolyfaceSmoothType, PolyfaceVertex,
+    PolyfaceVertexFlags,
+};
 pub use polygon_mesh::{
-    PolygonMesh as PolygonMeshEntity, PolygonMeshVertex, PolygonMeshFlags, SurfaceSmoothType,
+    PolygonMesh as PolygonMeshEntity, PolygonMeshFlags, PolygonMeshVertex, SurfaceSmoothType,
 };
-pub use light::{Light, LightPhotometricData};
-pub use section_symbol::{
-    SectionSymbol, SectionSymbolPoint, SectionViewStyle,
+pub use polyline::{
+    Polyline, Polyline2D, PolylineFlags, SmoothSurfaceType, Vertex2D, Vertex3D, VertexFlags,
 };
-pub use proxy_graphics::{
-    ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText,
+pub use polyline3d::{Polyline3D, Polyline3DFlags, Vertex3DPolyline};
+pub use proxy_graphics::{ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText};
+pub use raster_image::{
+    ClipBoundary, ClipMode, ClipType, ImageDefinition, ImageDisplayFlags, ImageDisplayQuality,
+    RasterImage, RasterImageBuilder, ResolutionUnit,
+};
+pub use ray::Ray;
+pub use section_symbol::{SectionSymbol, SectionSymbolPoint, SectionViewStyle};
+pub use seqend::Seqend;
+pub use shape::{gdt_shapes, standard_shapes, Shape};
+pub use solid::Solid;
+pub use solid3d::{
+    AcisData, AcisMaterial, AcisVersion, Body, Region, Silhouette, Solid3D, Wire, WireType,
+};
+pub use spline::{Spline, SplineFlags};
+pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceSweepOptions};
+pub use table::{
+    BorderPropertyFlags, BorderType, BreakFlowDirection, BreakOptionFlags, CellBorder, CellContent,
+    CellContentGeometry, CellEdgeFlags, CellRange, CellStateFlags, CellStyle,
+    CellStylePropertyFlags, CellStyleType, CellType, CellValue, CellValueType, ContentLayoutFlags,
+    LegacyBorderOverrides, LegacyTableStyleOverride, Table, TableAttribute, TableBreakData,
+    TableBreakRange, TableBuilder, TableCell, TableCellContentType, TableColumn, TableCustomData,
+    TableRow, ValueUnitType,
+};
+pub use text::{Text, TextHorizontalAlignment, TextVerticalAlignment};
+pub use tolerance::{gdt_symbols, Tolerance};
+pub use underlay::{
+    DgnUnderlay, DgnUnderlayDefinition, DwfUnderlay, DwfUnderlayDefinition, PdfUnderlay,
+    PdfUnderlayDefinition, Underlay, UnderlayDefinition, UnderlayDisplayFlags, UnderlayType,
 };
 pub use unknown_entity::UnknownEntity;
 pub use view_border::ViewBorder;
-pub use extended_entity::*;
-pub use embedded_entity::EmbeddedEntity;
+pub use viewport::{GridFlags, StandardView, Viewport, ViewportRenderMode, ViewportStatusFlags};
+pub use wipeout::{Wipeout, WipeoutClipMode, WipeoutClipType, WipeoutDisplayFlags};
+pub use xline::XLine;
 
 /// Base trait for all CAD entities
 pub trait Entity {
@@ -202,9 +199,9 @@ pub trait Entity {
 
     /// Get the entity type name
     fn entity_type(&self) -> &'static str;
-    
+
     /// Apply a general transform to the entity
-    /// 
+    ///
     /// This is the main transformation method. Default implementation
     /// only supports translation for backward compatibility.
     fn apply_transform(&mut self, transform: &Transform) {
@@ -213,27 +210,27 @@ pub trait Entity {
         let translated = transform.apply(origin);
         self.translate(translated);
     }
-    
+
     /// Apply rotation around an axis
     fn apply_rotation(&mut self, axis: Vector3, angle: f64) {
         self.apply_transform(&Transform::from_rotation(axis, angle));
     }
-    
+
     /// Apply uniform scaling
     fn apply_scaling(&mut self, scale: f64) {
         self.apply_transform(&Transform::from_scale(scale));
     }
-    
+
     /// Apply non-uniform scaling
     fn apply_scaling_xyz(&mut self, scale: Vector3) {
         self.apply_transform(&Transform::from_scaling(scale));
     }
-    
+
     /// Apply scaling with a specific origin point
     fn apply_scaling_with_origin(&mut self, scale: Vector3, origin: Vector3) {
         self.apply_transform(&Transform::from_scaling_with_origin(scale, origin));
     }
-    
+
     /// Apply a mirror transform with entity-specific corrections
     ///
     /// Override this for entities that need post-processing after mirroring
@@ -241,31 +238,42 @@ pub trait Entity {
     fn apply_mirror(&mut self, transform: &Transform) {
         self.apply_transform(transform);
     }
-    
+
     /// Mirror the entity across the YZ plane (negate X coordinates)
     fn mirror_x(&mut self) {
         self.apply_mirror(&Transform::from_mirror_x());
     }
-    
+
     /// Mirror the entity across the XZ plane (negate Y coordinates)
     fn mirror_y(&mut self) {
         self.apply_mirror(&Transform::from_mirror_y());
     }
-    
+
     /// Mirror the entity across the XY plane (negate Z coordinates)
     fn mirror_z(&mut self) {
         self.apply_mirror(&Transform::from_mirror_z());
     }
-    
+
     /// Mirror the entity across a line defined by two points (in the XY plane)
     fn mirror_about_line(&mut self, p1: Vector3, p2: Vector3) {
         self.apply_mirror(&Transform::from_mirror_line(p1, p2));
     }
-    
+
     /// Mirror the entity across an arbitrary plane
     fn mirror_about_plane(&mut self, point: Vector3, normal: Vector3) {
         self.apply_mirror(&Transform::from_mirror_plane(point, normal));
     }
+}
+
+/// Verbatim DWG record bytes of an entity (see [`EntityCommon::raw_record`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawRecord {
+    /// Payload between the ModularShort length prefix and the CRC-16 trailer.
+    pub data: Vec<u8>,
+    /// R2010+ MC handle-stream size framing value.
+    pub handle_bits: i64,
+    /// Version the bytes were encoded for; passthrough is only valid for this exact target.
+    pub version: crate::types::DxfVersion,
 }
 
 /// Common entity data shared by all entities
@@ -276,6 +284,11 @@ pub struct EntityCommon {
     pub handle: Handle,
     /// Layer name
     pub layer: String,
+    /// DWG layer handle as read from the file. Preserved so consumers can tell
+    /// an entity on layer "0" from one whose layer reference did not resolve
+    /// (the DWG reader falls back to `layer = "0"` in that case).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub layer_handle: Option<Handle>,
     /// Color
     pub color: Color,
     /// Line weight
@@ -289,8 +302,9 @@ pub struct EntityCommon {
     /// Linetype scale factor (default 1.0)
     pub linetype_scale: f64,
     /// Transparency
+    #[cfg_attr(feature = "serde", serde(default))]
     pub transparency: Transparency,
-    /// DXF named/color-book color name (group code 430).
+    /// Named/color-book identity from DXF group code 430.
     #[cfg_attr(feature = "serde", serde(default))]
     pub color_name: Option<String>,
     /// Visibility flag
@@ -344,20 +358,46 @@ pub struct EntityCommon {
     /// model, so skipped for serde.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub has_ds_data: bool,
+    /// The exact merged-stream bytes this entity was decoded from (DWG only),
+    /// with the framing the writer needs to re-emit them verbatim.
+    /// Set by the DWG reader; cleared by every mutable access (`get_entity_mut`,
+    /// `entities_mut`) and by `add_entity`, so it is only ever present on an
+    /// entity that is byte-for-byte what the source file contained. The writer
+    /// copies such records instead of re-encoding them (same target version only).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub raw_record: Option<std::sync::Arc<RawRecord>>,
 }
 
 impl EntityCommon {
+    fn preserve_storage_data_from(&mut self, source: &Self) {
+        self.layer_handle = source.layer_handle;
+        self.linetype_handle = source.linetype_handle;
+        self.graphic_data = source.graphic_data.clone();
+        self.color_book_handle = source.color_book_handle;
+        self.face_visual_style_handle = source.face_visual_style_handle;
+        self.edge_visual_style_handle = source.edge_visual_style_handle;
+        self.material_flags = source.material_flags;
+        self.material_handle = source.material_handle;
+        self.shadow_flags = source.shadow_flags;
+        self.plotstyle_flags = source.plotstyle_flags;
+        self.plotstyle_handle = source.plotstyle_handle;
+        self.entity_mode = source.entity_mode;
+        self.has_ds_data = source.has_ds_data;
+    }
+
     /// Create new common entity data with defaults
     pub fn new() -> Self {
         EntityCommon {
+            raw_record: None,
             handle: Handle::NULL,
             layer: "0".to_string(),
+            layer_handle: None,
             color: Color::ByLayer,
             line_weight: LineWeight::ByLayer,
             linetype: String::new(),
             linetype_handle: None,
             linetype_scale: 1.0,
-            transparency: Transparency::OPAQUE,
+            transparency: Transparency::BY_LAYER,
             color_name: None,
             invisible: false,
             extended_data: crate::xdata::ExtendedData::new(),
@@ -424,15 +464,15 @@ pub enum EntityType {
     /// Text entity
     Text(Text),
     /// Multi-line text entity
-    MText(MText),
+    MText(Box<MText>),
     /// Spline entity
     Spline(Spline),
     /// Helix entity (spline-derived 3D spiral)
-    Helix(Helix),
+    Helix(Box<Helix>),
     /// Dimension entity
-    Dimension(Dimension),
+    Dimension(Box<Dimension>),
     /// Hatch entity
-    Hatch(Hatch),
+    Hatch(Box<Hatch>),
     /// Solid entity
     Solid(Solid),
     /// 3D Face entity
@@ -448,7 +488,7 @@ pub enum EntityType {
     /// XLine entity (construction line, infinite)
     XLine(XLine),
     /// Viewport entity (paper space viewport)
-    Viewport(Viewport),
+    Viewport(Box<Viewport>),
     /// Attribute definition entity
     AttributeDefinition(AttributeDefinition),
     /// Attribute entity (block attribute instance)
@@ -456,7 +496,7 @@ pub enum EntityType {
     /// Leader entity
     Leader(Leader),
     /// MultiLeader entity
-    MultiLeader(MultiLeader),
+    MultiLeader(Box<MultiLeader>),
     /// MLine (multiline) entity
     MLine(MLine),
     /// Mesh entity
@@ -470,9 +510,9 @@ pub enum EntityType {
     /// Body entity
     Body(Body),
     /// Surface entity (ACAD_SURFACE family: lofted/swept/extruded/etc.)
-    Surface(Surface),
+    Surface(Box<Surface>),
     /// Table entity
-    Table(Table),
+    Table(Box<Table>),
     /// Tolerance entity (geometric tolerancing)
     Tolerance(Tolerance),
     /// PolyfaceMesh entity
@@ -486,20 +526,39 @@ pub enum EntityType {
     /// End-of-sequence marker
     Seqend(Seqend),
     /// OLE2 embedded object
-    Ole2Frame(Ole2Frame),
+    Ole2Frame(Box<Ole2Frame>),
     /// Polygon mesh (3D surface mesh)
     PolygonMesh(PolygonMeshEntity),
     /// Light entity (point / spot / distant light source)
-    Light(Light),
+    Light(Box<Light>),
     SectionSymbol(SectionSymbol),
     ViewBorder(ViewBorder),
     /// Structured class-based and legacy entities.
-    Extended(ExtendedEntity),
+    Extended(Box<ExtendedEntity>),
     /// Unknown / unsupported entity type (common fields only)
     Unknown(UnknownEntity),
 }
 
 impl EntityType {
+    /// Restore storage-only data omitted from serde after editing the public
+    /// representation of an entity. The source and destination must have the
+    /// same variant and identity; callers remain responsible for that check.
+    pub fn preserve_storage_data_from(&mut self, source: &Self) {
+        self.common_mut()
+            .preserve_storage_data_from(source.common());
+        match (self, source) {
+            (Self::Extended(value), Self::Extended(source)) => {
+                value.data.preserve_storage_data_from(&source.data);
+            }
+            (Self::Unknown(value), Self::Unknown(source)) => {
+                value.raw_dwg_data = source.raw_dwg_data.clone();
+                value.raw_dxf_codes = source.raw_dxf_codes.clone();
+                value.dwg_source_version = source.dwg_source_version;
+            }
+            _ => {}
+        }
+    }
+
     /// Get a reference to the entity trait object
     pub fn as_entity(&self) -> &dyn Entity {
         match self {
@@ -513,11 +572,11 @@ impl EntityType {
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
             EntityType::Text(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_ref(),
             EntityType::Spline(e) => e,
-            EntityType::Helix(e) => e,
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Helix(e) => e.as_ref(),
+            EntityType::Dimension(e) => e.as_ref(),
+            EntityType::Hatch(e) => e.as_ref(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -525,31 +584,31 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_ref(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
-            EntityType::MultiLeader(e) => e,
+            EntityType::MultiLeader(e) => e.as_ref(),
             EntityType::MLine(e) => e,
             EntityType::Mesh(e) => e,
             EntityType::RasterImage(e) => e,
             EntityType::Solid3D(e) => e,
             EntityType::Region(e) => e,
             EntityType::Body(e) => e,
-            EntityType::Surface(e) => e,
-            EntityType::Table(e) => e,
+            EntityType::Surface(e) => e.as_ref(),
+            EntityType::Table(e) => e.as_ref(),
             EntityType::Tolerance(e) => e,
             EntityType::PolyfaceMesh(e) => e,
             EntityType::Wipeout(e) => e,
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_ref(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_ref(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
-            EntityType::Extended(e) => e,
+            EntityType::Extended(e) => e.as_ref(),
             EntityType::Unknown(e) => e,
         }
     }
@@ -566,12 +625,12 @@ impl EntityType {
             EntityType::Polyline2D(e) => e,
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_mut(),
             EntityType::Text(e) => e,
             EntityType::Spline(e) => e,
-            EntityType::Helix(e) => e,
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Helix(e) => e.as_mut(),
+            EntityType::Dimension(e) => e.as_mut(),
+            EntityType::Hatch(e) => e.as_mut(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -579,31 +638,31 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_mut(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
-            EntityType::MultiLeader(e) => e,
+            EntityType::MultiLeader(e) => e.as_mut(),
             EntityType::MLine(e) => e,
             EntityType::Mesh(e) => e,
             EntityType::RasterImage(e) => e,
             EntityType::Solid3D(e) => e,
             EntityType::Region(e) => e,
             EntityType::Body(e) => e,
-            EntityType::Surface(e) => e,
-            EntityType::Table(e) => e,
+            EntityType::Surface(e) => e.as_mut(),
+            EntityType::Table(e) => e.as_mut(),
             EntityType::Tolerance(e) => e,
             EntityType::PolyfaceMesh(e) => e,
             EntityType::Wipeout(e) => e,
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_mut(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_mut(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
-            EntityType::Extended(e) => e,
+            EntityType::Extended(e) => e.as_mut(),
             EntityType::Unknown(e) => e,
         }
     }
@@ -714,5 +773,42 @@ impl EntityType {
             EntityType::Extended(e) => &mut e.common,
             EntityType::Unknown(e) => &mut e.common,
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_data_tests {
+    use super::*;
+
+    #[test]
+    fn public_record_edit_can_preserve_opaque_entity_data() {
+        let mut source = UnknownEntity::new("CUSTOM_ENTITY");
+        source.common.graphic_data = Some(vec![1, 2, 3]);
+        source.raw_dwg_data = Some(vec![4, 5, 6]);
+        source.raw_dxf_codes = Some(vec![(100, "payload".into())]);
+        let source = EntityType::Unknown(source);
+
+        let mut edited = source.clone();
+        if let EntityType::Unknown(value) = &mut edited {
+            value.common.layer = "Edited".into();
+            value.common.graphic_data = None;
+            value.raw_dwg_data = None;
+            value.raw_dxf_codes = None;
+        }
+        edited.preserve_storage_data_from(&source);
+
+        let EntityType::Unknown(edited) = edited else {
+            unreachable!()
+        };
+        assert_eq!(edited.common.layer, "Edited");
+        assert_eq!(edited.common.graphic_data, Some(vec![1, 2, 3]));
+        assert_eq!(edited.raw_dwg_data, Some(vec![4, 5, 6]));
+        assert_eq!(edited.raw_dxf_codes, Some(vec![(100, "payload".into())]));
+    }
+
+    #[test]
+    fn entity_type_stays_narrow() {
+        let size = std::mem::size_of::<EntityType>();
+        assert!(size <= 856, "EntityType is {size} bytes");
     }
 }

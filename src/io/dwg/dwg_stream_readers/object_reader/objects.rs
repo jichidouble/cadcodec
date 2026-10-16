@@ -4,18 +4,18 @@
 //! `dwg_stream_writers/object_writer/objects.rs`. They read object-specific
 //! fields after common non-entity data has already been parsed.
 
+use super::safe_count;
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
-use crate::types::{Color, Vector2, Vector3, DxfVersion};
 use crate::objects::{
-    Material, MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture, VisualStyle,
-    VisualStyleProperty, VisualStylePropertyValue, NamedTableCellStyle, RowCellStyle,
+    Material, MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture,
+    NamedTableCellStyle, ProxyObjectReference, ProxyReferenceKind, RowCellStyle,
     TableBorderPropertyFlags, TableBorderType, TableCellBorder, TableCellStyleData,
-    TableContentFormat, TableGridFormat, TableStyle,
-    ProxyObjectReference, ProxyReferenceKind, XRecordEntry, XRecordValue,
+    TableContentFormat, TableGridFormat, TableStyle, VisualStyle, VisualStyleProperty,
+    VisualStylePropertyValue, XRecordEntry, XRecordValue,
 };
+use crate::types::{Color, DxfVersion, Vector2, Vector3};
 use crate::types::{Handle, LineWeight};
-use super::safe_count;
 
 fn read_visual_style_property(
     reader: &mut DwgMergedReader,
@@ -102,13 +102,23 @@ pub fn read_visual_style(
             VisualStylePropertyValue::Long(reader.read_bit_long()),
             VisualStylePropertyValue::Long(reader.read_bit_long()),
             VisualStylePropertyValue::Long(reader.read_bit_long()),
-            VisualStylePropertyValue::Double(reader.read_bit_double()),
         ] {
             value.properties.push(VisualStyleProperty {
                 value: property,
                 enabled: 1,
             });
         }
+        // Group 45 is in the binary record only from R2007 on; R2004 ends
+        // with the internal-use flag. Keep the 24-entry legacy list complete.
+        let group_45 = if version.r2007_plus() {
+            reader.read_bit_double()
+        } else {
+            0.0
+        };
+        value.properties.push(VisualStyleProperty {
+            value: VisualStylePropertyValue::Double(group_45),
+            enabled: 1,
+        });
         value.internal_use_only = reader.read_bit();
         return value;
     }
@@ -241,7 +251,7 @@ fn read_material_texture(reader: &mut DwgMergedReader, depth: usize) -> Material
             4 => Some(MaterialProceduralValue::Color(reader.read_cm_color())),
             5 => Some(MaterialProceduralValue::Text(reader.read_variable_text())),
             6 if depth < 8 => {
-                let count = safe_count(reader.read_bit_short() as i32);
+                let count = safe_count(reader.read_bit_short() as i32, reader);
                 let mut rows = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     let name = reader.read_variable_text();
@@ -313,10 +323,7 @@ pub fn read_material(reader: &mut DwgMergedReader, version: DwgVersion) -> Mater
     value
 }
 
-fn read_legacy_table_row_style(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> RowCellStyle {
+fn read_legacy_table_row_style(reader: &mut DwgMergedReader, version: DwgVersion) -> RowCellStyle {
     let mut value = RowCellStyle::new();
     let text_style = reader.read_handle();
     value.text_style_handle = (text_style != 0).then(|| Handle::from(text_style));
@@ -387,7 +394,7 @@ pub(super) fn read_table_cell_style_data(reader: &mut DwgMergedReader) -> TableC
         value.horizontal_spacing = reader.read_bit_double();
         value.vertical_spacing = reader.read_bit_double();
     }
-    let count = safe_count(reader.read_bit_long()).min(6);
+    let count = safe_count(reader.read_bit_long(), reader).min(6);
     value.borders.reserve(count as usize);
     for _ in 0..count {
         let index_mask = reader.read_bit_long();
@@ -438,8 +445,7 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
     if !version.r2010_plus() {
         value.name = reader.read_variable_text();
         value.flow_direction = crate::objects::TableFlowDirection::from(reader.read_bit_short());
-        value.flags =
-            crate::objects::TableStyleFlags::from_bits_retain(reader.read_bit_short());
+        value.flags = crate::objects::TableStyleFlags::from_bits_retain(reader.read_bit_short());
         value.horizontal_margin = reader.read_bit_double();
         value.vertical_margin = reader.read_bit_double();
         value.title_suppressed = reader.read_bit();
@@ -447,49 +453,80 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
         value.data_row_style = read_legacy_table_row_style(reader, version);
         value.title_row_style = read_legacy_table_row_style(reader, version);
         value.header_row_style = read_legacy_table_row_style(reader, version);
+        value.sync_suppression_flags();
         return value;
     }
     value.modern_unknown_byte = reader.read_byte();
     value.name = reader.read_variable_text();
     value.modern_unknown_long1 = reader.read_bit_long();
+    // The R2010+ table style flags (title / header suppressed).
+    value.flags =
+        crate::objects::TableStyleFlags::from_bits_retain(value.modern_unknown_long1 as i16);
+    value.sync_suppression_flags();
     value.modern_unknown_long2 = reader.read_bit_long();
     value.modern_cell_style_handle = Handle::from(reader.read_handle());
     let modern_style = read_named_table_cell_style(reader);
     value.horizontal_margin = modern_style.cell_style.horizontal_margin;
     value.vertical_margin = modern_style.cell_style.vertical_margin;
-    value.data_row_style.data_type = modern_style.cell_style.content_format.value_data_type;
-    value.data_row_style.unit_type = modern_style.cell_style.content_format.value_unit_type;
-    value.data_row_style.format_string =
-        modern_style.cell_style.content_format.value_format_string.clone();
-    value.data_row_style.alignment =
-        crate::objects::CellAlignment::from(modern_style.cell_style.content_format.cell_alignment as i16);
-    value.data_row_style.text_color = modern_style.cell_style.content_format.content_color;
-    value.data_row_style.text_style_handle =
-        (!modern_style.cell_style.content_format.text_style.is_null())
-            .then_some(modern_style.cell_style.content_format.text_style);
-    value.data_row_style.text_height = modern_style.cell_style.content_format.text_height;
-    value.data_row_style.fill_color = modern_style.cell_style.background_color;
-    value.data_row_style.fill_enabled = modern_style.cell_style.data_flags != 0;
-    for grid in &modern_style.cell_style.borders {
-        match grid.index_mask {
-            1 => value.data_row_style.top_border = grid.border.clone(),
-            2 => value.data_row_style.right_border = grid.border.clone(),
-            4 => value.data_row_style.bottom_border = grid.border.clone(),
-            8 => value.data_row_style.left_border = grid.border.clone(),
-            16 => value.data_row_style.horizontal_inside_border = grid.border.clone(),
-            32 => value.data_row_style.vertical_inside_border = grid.border.clone(),
-            _ => {}
-        }
-    }
+    apply_cell_style_to_row(&mut value.data_row_style, &modern_style.cell_style);
     value.modern_style = Some(modern_style);
-    let override_count = safe_count(reader.read_bit_long()).min(64);
+    let override_count = safe_count(reader.read_bit_long(), reader).min(64);
     value.modern_overrides.reserve(override_count as usize);
     for _ in 0..override_count {
         let key = reader.read_bit_long();
-        value.modern_overrides
+        value
+            .modern_overrides
             .push((key, read_named_table_cell_style(reader)));
     }
+    // The title, header and data rows of the pre-R2010 record are the named
+    // cell styles of the R2010+ record; a save to an older version writes
+    // the rows.
+    for (_, style) in &value.modern_overrides {
+        let row = match style.name.as_str() {
+            "_TITLE" => &mut value.title_row_style,
+            "_HEADER" => &mut value.header_row_style,
+            "_DATA" => &mut value.data_row_style,
+            _ => continue,
+        };
+        apply_cell_style_to_row(row, &style.cell_style);
+    }
     value
+}
+
+fn apply_cell_style_to_row(
+    row: &mut crate::objects::RowCellStyle,
+    style: &crate::objects::TableCellStyleData,
+) {
+    let format = &style.content_format;
+    row.data_type = format.value_data_type;
+    row.unit_type = format.value_unit_type;
+    row.format_string = format.value_format_string.clone();
+    row.alignment = crate::objects::CellAlignment::from(format.cell_alignment as i16);
+    row.text_color = format.content_color;
+    row.text_style_handle = (!format.text_style.is_null()).then_some(format.text_style);
+    row.text_height = format.text_height;
+    // No background color means an unfilled row; the row keeps its default
+    // fill color.
+    row.fill_enabled = style.background_color != crate::types::Color::None;
+    if row.fill_enabled {
+        row.fill_color = style.background_color;
+    }
+    // Grid edges in R2010+ order: top, horizontal inside, bottom, left,
+    // vertical inside, right. The grid's stored flag is set for a hidden
+    // edge, the reverse of what `is_invisible` holds for it.
+    for grid in &style.borders {
+        let mut border = grid.border.clone();
+        border.is_invisible = !border.is_invisible;
+        match grid.index_mask {
+            1 => row.top_border = border,
+            2 => row.horizontal_inside_border = border,
+            4 => row.bottom_border = border,
+            8 => row.left_border = border,
+            16 => row.vertical_inside_border = border,
+            32 => row.right_border = border,
+            _ => {}
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -573,7 +610,7 @@ pub struct PlotSettingsData {
 pub struct LayoutData {
     pub plot_settings: PlotSettingsData,
     pub name: String,
-    pub tab_order: i32,
+    pub tab_order: i16,
     pub flags: i16,
     pub ucs_origin: Vector3,
     pub min_limits: (f64, f64),
@@ -756,15 +793,23 @@ pub struct WipeoutVariablesData {
 /// ("ACAD_FILTER\u{80}0…"), which broke exact-name lookups (xclip filters,
 /// gradient round-trip records). The trailing garbage is always non-printable
 /// or high-bit, so cut the key at the first such byte.
+/// Trim a dictionary key at the first control character.
+///
+/// Keys are arbitrary user text: material, page-setup, layer-state and
+/// dictionary-variable names routinely contain non-ASCII letters (Swedish
+/// "GRÅ", "LIMTRÄ", "VITMÅLAD" ...). Cutting at the first byte above 0x7E,
+/// as this used to do, collapsed such keys ("R" three times in one
+/// ACAD_MATERIAL dictionary) and the collision was then written back to the
+/// file. Only control characters can never be part of a key.
 fn clean_dict_key(name: String) -> String {
-    match name.find(|c: char| (c as u32) < 0x20 || (c as u32) > 0x7e) {
+    match name.find(|c: char| (c as u32) < 0x20) {
         Some(pos) => name[..pos].to_string(),
         None => name,
     }
 }
 
 pub fn read_dictionary(reader: &mut DwgMergedReader, version: DwgVersion) -> DictionaryData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
 
     let mut duplicate_cloning = 0i16;
     let mut hard_owner = false;
@@ -792,7 +837,7 @@ pub fn read_dictionary(reader: &mut DwgMergedReader, version: DwgVersion) -> Dic
 }
 
 pub fn read_dictionary_with_default(reader: &mut DwgMergedReader) -> DictionaryWithDefaultData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
     let duplicate_cloning = reader.read_bit_short();
     let hard_owner = reader.read_byte() != 0;
 
@@ -829,7 +874,10 @@ fn duplicate_keys(entries: &[DictionaryEntry]) -> Vec<String> {
 pub fn read_dictionary_variable(reader: &mut DwgMergedReader) -> DictionaryVariableData {
     let schema_number = reader.read_byte();
     let value = reader.read_variable_text();
-    DictionaryVariableData { schema_number, value }
+    DictionaryVariableData {
+        schema_number,
+        value,
+    }
 }
 
 /// Read an AcDbBlockVisibilityParameter object body (after the common
@@ -854,27 +902,17 @@ pub fn read_block_visibility_parameter(
     p.eval_minor = reader.read_bit_long();
     p.eval_value_code = reader.read_bit_short();
     p.eval_value = match p.eval_value_code {
-        40 => {
-            crate::objects::BlockEvalValue::Real(reader.read_bit_double())
-        }
+        40 => crate::objects::BlockEvalValue::Real(reader.read_bit_double()),
         10 | 11 => {
             let point = reader.read_2raw_double();
             crate::objects::BlockEvalValue::Point([point.x, point.y])
         }
-        1 => {
-            crate::objects::BlockEvalValue::Text(reader.read_variable_text())
-        }
-        90 => {
-            crate::objects::BlockEvalValue::Long(reader.read_bit_long())
-        }
+        1 => crate::objects::BlockEvalValue::Text(reader.read_variable_text()),
+        90 => crate::objects::BlockEvalValue::Long(reader.read_bit_long()),
         91 => {
-            crate::objects::BlockEvalValue::Handle(crate::types::Handle::from(
-                reader.read_handle(),
-            ))
+            crate::objects::BlockEvalValue::Handle(crate::types::Handle::from(reader.read_handle()))
         }
-        70 => {
-            crate::objects::BlockEvalValue::Short(reader.read_bit_short())
-        }
+        70 => crate::objects::BlockEvalValue::Short(reader.read_bit_short()),
         _ => crate::objects::BlockEvalValue::None,
     };
     p.eval_node_id = reader.read_bit_long();
@@ -891,16 +929,16 @@ pub fn read_block_visibility_parameter(
 
     // ── AcDbBlock1PtParameter ──
     p.def_point = reader.read_3bit_double(); // 3BD def_pt (1010)
-    // Two PropInfo blocks: each is a BL connection count + (BL code, T name) pairs.
+                                             // Two PropInfo blocks: each is a BL connection count + (BL code, T name) pairs.
     for property_index in 0..2 {
-        let n = safe_count(reader.read_bit_long());
+        let n = safe_count(reader.read_bit_long(), reader);
         for _ in 0..n {
-            p.property_info[property_index]
-                .connections
-                .push(crate::objects::BlockParameterConnection {
+            p.property_info[property_index].connections.push(
+                crate::objects::BlockParameterConnection {
                     code: reader.read_bit_long(),
                     name: reader.read_variable_text(),
-                });
+                },
+            );
         }
     }
     p.property_info_count = reader.read_bit_long();
@@ -911,23 +949,24 @@ pub fn read_block_visibility_parameter(
     p.description = reader.read_variable_text(); // T blockvisi_desc (302)
     p.unknown_bool = reader.read_bit();
 
-    let num_blocks = safe_count(reader.read_bit_long()); // BL num_blocks (93)
+    let num_blocks = safe_count(reader.read_bit_long(), reader); // BL num_blocks (93)
     for _ in 0..num_blocks {
-        p.all_blocks.push(crate::types::Handle::from(reader.read_handle()));
+        p.all_blocks
+            .push(crate::types::Handle::from(reader.read_handle()));
     }
 
-    let num_states = safe_count(reader.read_bit_long()); // BL num_states (92)
+    let num_states = safe_count(reader.read_bit_long(), reader); // BL num_states (92)
     for _ in 0..num_states {
         let mut st = BlockVisibilityState {
             name: reader.read_variable_text(), // T state name (303)
             ..Default::default()
         };
-        let nb = safe_count(reader.read_bit_long()); // BL (94)
+        let nb = safe_count(reader.read_bit_long(), reader); // BL (94)
         for _ in 0..nb {
             st.visible_blocks
                 .push(crate::types::Handle::from(reader.read_handle()));
         }
-        let np = safe_count(reader.read_bit_long()); // BL (95)
+        let np = safe_count(reader.read_bit_long(), reader); // BL (95)
         for _ in 0..np {
             st.visible_params
                 .push(crate::types::Handle::from(reader.read_handle()));
@@ -968,8 +1007,8 @@ pub struct FieldReadData {
 pub fn read_field(reader: &mut DwgMergedReader) -> FieldReadData {
     let id = reader.read_variable_text();
     let code = reader.read_variable_text();
-    let num_childs = safe_count(reader.read_bit_long());
-    let num_objects = safe_count(reader.read_bit_long());
+    let num_childs = safe_count(reader.read_bit_long(), reader);
+    let num_objects = safe_count(reader.read_bit_long(), reader);
     // Object-specific handles follow the common owner/reactor/xdict handles in
     // the handle stream: the child fields first (recovered instead from object
     // owners, so skipped here), then the referenced objects.
@@ -984,7 +1023,10 @@ pub fn read_field(reader: &mut DwgMergedReader) -> FieldReadData {
 }
 
 /// Read the PlotSettings data portion (shared by Layout and standalone PlotSettings).
-pub fn read_plot_settings_data(reader: &mut DwgMergedReader, version: DwgVersion) -> PlotSettingsData {
+pub fn read_plot_settings_data(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+) -> PlotSettingsData {
     let page_name = reader.read_variable_text();
     let printer_name = reader.read_variable_text();
     let plot_flags = reader.read_bit_short();
@@ -1042,16 +1084,38 @@ pub fn read_plot_settings_data(reader: &mut DwgMergedReader, version: DwgVersion
     };
 
     PlotSettingsData {
-        page_name, printer_name, plot_flags,
-        left_margin, bottom_margin, right_margin, top_margin,
-        paper_width, paper_height, paper_size,
-        origin_x, origin_y,
-        paper_units, rotation, plot_type,
-        window_min_x, window_min_y, window_max_x, window_max_y,
-        scale_numerator, scale_denominator, current_style_sheet,
-        scale_type, scale_factor, paper_image_x, paper_image_y,
-        plot_view_name, shade_plot_mode, shade_plot_resolution, shade_plot_dpi,
-        plot_view_handle, visual_style_handle,
+        page_name,
+        printer_name,
+        plot_flags,
+        left_margin,
+        bottom_margin,
+        right_margin,
+        top_margin,
+        paper_width,
+        paper_height,
+        paper_size,
+        origin_x,
+        origin_y,
+        paper_units,
+        rotation,
+        plot_type,
+        window_min_x,
+        window_min_y,
+        window_max_x,
+        window_max_y,
+        scale_numerator,
+        scale_denominator,
+        current_style_sheet,
+        scale_type,
+        scale_factor,
+        paper_image_x,
+        paper_image_y,
+        plot_view_name,
+        shade_plot_mode,
+        shade_plot_resolution,
+        shade_plot_dpi,
+        plot_view_handle,
+        visual_style_handle,
     }
 }
 
@@ -1059,16 +1123,17 @@ pub fn read_layout(reader: &mut DwgMergedReader, version: DwgVersion) -> LayoutD
     let plot_settings = read_plot_settings_data(reader, version);
 
     let name = reader.read_variable_text();
-    let tab_order = reader.read_bit_long();
+    let tab_order = reader.read_bit_short();
     let flags = reader.read_bit_short();
-    let ucs_origin = reader.read_3bit_double();
+
+    let insertion_base = reader.read_3bit_double();
 
     let min_lim_x = reader.read_raw_double();
     let min_lim_y = reader.read_raw_double();
     let max_lim_x = reader.read_raw_double();
     let max_lim_y = reader.read_raw_double();
 
-    let insertion_base = reader.read_3bit_double();
+    let ucs_origin = reader.read_3bit_double();
     let x_axis = reader.read_3bit_double();
     let y_axis = reader.read_3bit_double();
     let elevation = reader.read_bit_double();
@@ -1076,7 +1141,11 @@ pub fn read_layout(reader: &mut DwgMergedReader, version: DwgVersion) -> LayoutD
     let min_extents = reader.read_3bit_double();
     let max_extents = reader.read_3bit_double();
 
-    let viewport_count = if version.r2004_plus() { safe_count(reader.read_bit_long()) } else { 0 };
+    let viewport_count = if version.r2004_plus() {
+        safe_count(reader.read_bit_long(), reader)
+    } else {
+        0
+    };
 
     let block_record_handle = reader.read_handle();
     let viewport_handle = reader.read_handle();
@@ -1084,8 +1153,7 @@ pub fn read_layout(reader: &mut DwgMergedReader, version: DwgVersion) -> LayoutD
     let named_ucs_handle = reader.read_handle();
 
     // R2004+: viewport handles
-    let mut viewport_handles =
-        Vec::with_capacity(viewport_count.max(0) as usize);
+    let mut viewport_handles = Vec::with_capacity(viewport_count.max(0) as usize);
     if version.r2004_plus() {
         for _ in 0..viewport_count {
             viewport_handles.push(reader.read_handle());
@@ -1093,17 +1161,33 @@ pub fn read_layout(reader: &mut DwgMergedReader, version: DwgVersion) -> LayoutD
     }
 
     LayoutData {
-        plot_settings, name, tab_order, flags, ucs_origin,
+        plot_settings,
+        name,
+        tab_order,
+        flags,
+        ucs_origin,
         min_limits: (min_lim_x, min_lim_y),
         max_limits: (max_lim_x, max_lim_y),
-        insertion_base, x_axis, y_axis, elevation, ucs_ortho_type,
-        min_extents, max_extents, viewport_count,
-        block_record_handle, viewport_handle, base_ucs_handle, named_ucs_handle,
+        insertion_base,
+        x_axis,
+        y_axis,
+        elevation,
+        ucs_ortho_type,
+        min_extents,
+        max_extents,
+        viewport_count,
+        block_record_handle,
+        viewport_handle,
+        base_ucs_handle,
+        named_ucs_handle,
         viewport_handles,
     }
 }
 
-pub fn read_plot_settings_obj(reader: &mut DwgMergedReader, version: DwgVersion) -> PlotSettingsData {
+pub fn read_plot_settings_obj(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+) -> PlotSettingsData {
     read_plot_settings_data(reader, version)
 }
 
@@ -1112,16 +1196,25 @@ pub fn read_group(reader: &mut DwgMergedReader) -> GroupData {
     let unnamed = reader.read_bit_short();
     let selectable = reader.read_bit_short() != 0;
 
-    let num_entities = safe_count(reader.read_bit_long());
+    let num_entities = safe_count(reader.read_bit_long(), reader);
     let mut entity_handles = Vec::with_capacity(num_entities as usize);
     for _ in 0..num_entities {
         entity_handles.push(reader.read_handle());
     }
 
-    GroupData { description, unnamed, selectable, entity_handles }
+    GroupData {
+        description,
+        unnamed,
+        selectable,
+        entity_handles,
+    }
 }
 
-pub fn read_mlinestyle(reader: &mut DwgMergedReader, version: DwgVersion, dxf_version: DxfVersion) -> MLineStyleData {
+pub fn read_mlinestyle(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+) -> MLineStyleData {
     let name = reader.read_variable_text();
     let description = reader.read_variable_text();
     let flags = reader.read_bit_short();
@@ -1139,13 +1232,29 @@ pub fn read_mlinestyle(reader: &mut DwgMergedReader, version: DwgVersion, dxf_ve
         } else {
             reader.read_bit_short() as u64
         };
-        elements.push(MLineStyleElementData { offset, color, linetype_index_or_handle });
+        elements.push(MLineStyleElementData {
+            offset,
+            color,
+            linetype_index_or_handle,
+        });
     }
 
-    MLineStyleData { name, description, flags, fill_color, start_angle, end_angle, elements }
+    MLineStyleData {
+        name,
+        description,
+        flags,
+        fill_color,
+        start_angle,
+        end_angle,
+        elements,
+    }
 }
 
-pub fn read_multileader_style(reader: &mut DwgMergedReader, version: DwgVersion, dxf_version: crate::types::DxfVersion) -> MultiLeaderStyleData {
+pub fn read_multileader_style(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: crate::types::DxfVersion,
+) -> MultiLeaderStyleData {
     // R2010+: Version (BS, expected 2)
     if version.r2010_plus() {
         let _style_version = reader.read_bit_short();
@@ -1208,19 +1317,50 @@ pub fn read_multileader_style(reader: &mut DwgMergedReader, version: DwgVersion,
     }
 
     MultiLeaderStyleData {
-        content_type, multileader_draw_order, leader_draw_order,
-        max_leader_points, first_segment_angle, second_segment_angle,
-        path_type, line_color, line_type_handle, line_weight,
-        enable_landing, landing_gap, enable_dogleg, landing_distance,
-        description, arrowhead_handle, arrowhead_size,
-        default_text, text_style_handle,
-        text_left_attachment, text_right_attachment, text_angle_type, text_alignment,
-        text_color, text_height, text_frame, text_always_left, align_space,
-        block_content_handle, block_content_color,
-        block_content_scale_x, block_content_scale_y, block_content_scale_z,
-        enable_block_scale, block_content_rotation, enable_block_rotation,
-        block_content_connection, scale_factor, property_changed, is_annotative,
-        break_gap_size, text_attachment_direction, text_top_attachment, text_bottom_attachment,
+        content_type,
+        multileader_draw_order,
+        leader_draw_order,
+        max_leader_points,
+        first_segment_angle,
+        second_segment_angle,
+        path_type,
+        line_color,
+        line_type_handle,
+        line_weight,
+        enable_landing,
+        landing_gap,
+        enable_dogleg,
+        landing_distance,
+        description,
+        arrowhead_handle,
+        arrowhead_size,
+        default_text,
+        text_style_handle,
+        text_left_attachment,
+        text_right_attachment,
+        text_angle_type,
+        text_alignment,
+        text_color,
+        text_height,
+        text_frame,
+        text_always_left,
+        align_space,
+        block_content_handle,
+        block_content_color,
+        block_content_scale_x,
+        block_content_scale_y,
+        block_content_scale_z,
+        enable_block_scale,
+        block_content_rotation,
+        enable_block_rotation,
+        block_content_connection,
+        scale_factor,
+        property_changed,
+        is_annotative,
+        break_gap_size,
+        text_attachment_direction,
+        text_top_attachment,
+        text_bottom_attachment,
         unknown_flag_298,
     }
 }
@@ -1233,7 +1373,14 @@ pub fn read_image_definition(reader: &mut DwgMergedReader) -> ImageDefinitionDat
     let resolution_unit = reader.read_byte();
     let pixel_size = reader.read_2raw_double();
 
-    ImageDefinitionData { class_version, size_in_pixels, file_name, is_loaded, resolution_unit, pixel_size }
+    ImageDefinitionData {
+        class_version,
+        size_in_pixels,
+        file_name,
+        is_loaded,
+        resolution_unit,
+        pixel_size,
+    }
 }
 
 /// Decoded body of an underlay definition object (AcDbUnderlayDefinition).
@@ -1248,7 +1395,10 @@ pub struct UnderlayDefinitionData {
 pub fn read_underlay_definition(reader: &mut DwgMergedReader) -> UnderlayDefinitionData {
     let file_path = reader.read_variable_text();
     let page_name = reader.read_variable_text();
-    UnderlayDefinitionData { file_path, page_name }
+    UnderlayDefinitionData {
+        file_path,
+        page_name,
+    }
 }
 
 pub fn read_image_definition_reactor(reader: &mut DwgMergedReader) -> ImageDefinitionReactorData {
@@ -1262,11 +1412,17 @@ pub fn read_scale(reader: &mut DwgMergedReader) -> ScaleData {
     let paper_units = reader.read_bit_double();
     let drawing_units = reader.read_bit_double();
     let is_unit_scale = reader.read_bit();
-    ScaleData { unknown_bs, name, paper_units, drawing_units, is_unit_scale }
+    ScaleData {
+        unknown_bs,
+        name,
+        paper_units,
+        drawing_units,
+        is_unit_scale,
+    }
 }
 
 pub fn read_sort_entities_table(reader: &mut DwgMergedReader) -> SortEntitiesTableData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
     // The per-entry sort handles are stored inline in the DATA section; the
     // owner block and the sorted entity handles follow in the handle stream
     // (owner first, then one handle per entry). The previous code read a
@@ -1286,7 +1442,10 @@ pub fn read_sort_entities_table(reader: &mut DwgMergedReader) -> SortEntitiesTab
             entity_handle,
         });
     }
-    SortEntitiesTableData { entries, block_owner_handle }
+    SortEntitiesTableData {
+        entries,
+        block_owner_handle,
+    }
 }
 
 fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool) {
@@ -1317,14 +1476,19 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
                 || code == 1005 =>
             {
                 require!(8);
-                let value = u64::from_le_bytes(
-                    raw[position..position + 8].try_into().unwrap(),
-                );
+                let value = u64::from_le_bytes(raw[position..position + 8].try_into().unwrap());
                 position += 8;
                 XRecordValue::Handle(Handle::from(value))
             }
-            0..=4 | 6..=9 | 100..=102 | 300..=309 | 410..=419
-            | 430..=439 | 470..=479 | 999 | 1000..=1003 => {
+            0..=4
+            | 6..=9
+            | 100..=102
+            | 300..=309
+            | 410..=419
+            | 430..=439
+            | 470..=479
+            | 999
+            | 1000..=1003 => {
                 require!(2);
                 let length = read_u16(position) as usize;
                 position += 2;
@@ -1340,61 +1504,44 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
                     require!(1usize.saturating_add(length));
                     let code_page = raw[position] as u16;
                     position += 1;
-                    let value =
-                        crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page)
-                            .decode(&raw[position..position + length])
-                            .0
-                            .into_owned();
+                    let value = crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page)
+                        .decode(&raw[position..position + length])
+                        .0
+                        .into_owned();
                     position += length;
-                    value
+                    crate::io::dxf::code_page::decode_legacy_escapes(&value)
                 };
                 XRecordValue::String(text)
             }
-            10..=37 | 110..=139 | 210..=269 | 1010..=1039
-            | 1043..=1069 => {
+            10..=37 | 110..=139 | 210..=269 | 1010..=1039 | 1043..=1069 => {
                 require!(24);
-                let x = f64::from_le_bytes(
-                    raw[position..position + 8].try_into().unwrap(),
-                );
-                let y = f64::from_le_bytes(
-                    raw[position + 8..position + 16].try_into().unwrap(),
-                );
-                let z = f64::from_le_bytes(
-                    raw[position + 16..position + 24].try_into().unwrap(),
-                );
+                let x = f64::from_le_bytes(raw[position..position + 8].try_into().unwrap());
+                let y = f64::from_le_bytes(raw[position + 8..position + 16].try_into().unwrap());
+                let z = f64::from_le_bytes(raw[position + 16..position + 24].try_into().unwrap());
                 position += 24;
                 XRecordValue::Point3D(x, y, z)
             }
             38..=59 | 140..=149 | 460..=469 | 1040..=1042 => {
                 require!(8);
-                let value = f64::from_le_bytes(
-                    raw[position..position + 8].try_into().unwrap(),
-                );
+                let value = f64::from_le_bytes(raw[position..position + 8].try_into().unwrap());
                 position += 8;
                 XRecordValue::Double(value)
             }
             150..=169 => {
                 require!(8);
-                let value = i64::from_le_bytes(
-                    raw[position..position + 8].try_into().unwrap(),
-                );
+                let value = i64::from_le_bytes(raw[position..position + 8].try_into().unwrap());
                 position += 8;
                 XRecordValue::Int64(value)
             }
-            60..=79 | 170..=179 | 270..=279 | 370..=389
-            | 400..=409 | 1070 => {
+            60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 | 1070 => {
                 require!(2);
-                let value = i16::from_le_bytes(
-                    raw[position..position + 2].try_into().unwrap(),
-                );
+                let value = i16::from_le_bytes(raw[position..position + 2].try_into().unwrap());
                 position += 2;
                 XRecordValue::Int16(value)
             }
             80..=99 | 420..=429 | 440..=459 | 1071 => {
                 require!(4);
-                let value = i32::from_le_bytes(
-                    raw[position..position + 4].try_into().unwrap(),
-                );
+                let value = i32::from_le_bytes(raw[position..position + 4].try_into().unwrap());
                 position += 4;
                 XRecordValue::Int32(value)
             }
@@ -1435,25 +1582,19 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
 
 pub fn read_xrecord(reader: &mut DwgMergedReader) -> XRecordData {
     // This field is a byte length, not an array item count. Real application
-    // payloads (FBXASSET in particular) routinely exceed MAX_ARRAY_COUNT.
+    // payloads (FBXASSET in particular) routinely exceed 100,000 bytes.
     // Bound corrupt declarations by the containing object's main-data stream
     // instead of truncating valid XRecords at 100,000 bytes.
-    let declared_size = reader.read_bit_long().max(0) as usize;
-    let available_size = (reader.main_remaining_bits().max(0) as usize) / 8;
-    let data_size = declared_size.min(available_size);
-    let mut raw_data = Vec::with_capacity(data_size);
-    for _ in 0..data_size {
-        raw_data.push(reader.read_byte());
-    }
+    let declared_size = reader.read_bit_long();
+    let data_size = reader.checked_main_count(i64::from(declared_size), 8) as usize;
+    let raw_data = reader.read_bytes(data_size);
     let cloning_flags = if reader.dxf_version() >= DxfVersion::AC1015 {
         reader.read_bit_short()
     } else {
         0
     };
-    let (mut entries, entries_complete) = decode_xrecord_entries(
-        &raw_data,
-        reader.dxf_version() >= DxfVersion::AC1021,
-    );
+    let (mut entries, entries_complete) =
+        decode_xrecord_entries(&raw_data, reader.dxf_version() >= DxfVersion::AC1021);
     let mut object_references = Vec::new();
     while reader.handle_remaining_bits() >= 8 {
         let (handle, reference_type) = reader.read_typed_handle();
@@ -1504,7 +1645,12 @@ pub fn read_raster_variables(reader: &mut DwgMergedReader) -> RasterVariablesDat
     let display_image_frame = reader.read_bit_short();
     let image_quality = reader.read_bit_short();
     let units = reader.read_bit_short();
-    RasterVariablesData { class_version, display_image_frame, image_quality, units }
+    RasterVariablesData {
+        class_version,
+        display_image_frame,
+        image_quality,
+        units,
+    }
 }
 
 pub fn read_placeholder(_reader: &mut DwgMergedReader) {
@@ -1527,11 +1673,17 @@ pub fn read_book_color(reader: &mut DwgMergedReader) -> BookColorData {
             String::new()
         };
         BookColorData {
-            color: Color::from_rgb(
-                ((true_color >> 16) & 0xFF) as u8,
-                ((true_color >> 8) & 0xFF) as u8,
-                (true_color & 0xFF) as u8,
-            ),
+            color: match true_color >> 24 {
+                0xC0 => Color::ByLayer,
+                0xC1 => Color::ByBlock,
+                0xC3 => Color::from_index((true_color & 0xFF) as i16),
+                0xC8 => Color::None,
+                _ => Color::from_rgb(
+                    ((true_color >> 16) & 0xFF) as u8,
+                    ((true_color >> 8) & 0xFF) as u8,
+                    (true_color & 0xFF) as u8,
+                ),
+            },
             color_name,
             book_name,
         }
@@ -1596,7 +1748,7 @@ pub struct GeoDataData {
 
 /// Read the AcDbGeoData object body (after common non-entity data).
 ///
-/// Ported from ACadSharp `DwgObjectReader.readGeoData`. The field order is
+/// Ported from the reference `DwgObjectReader.readGeoData`. The field order is
 /// version-dependent: R2010/R2013 store the coordinate system as a MapGuide XML
 /// string, R2009 as a WKT PROJCS string. Trailing geo-mesh points/faces are not
 /// read (not needed for the coordinate system; the per-object reader is bounded).
@@ -1656,13 +1808,13 @@ pub fn read_geodata(reader: &mut DwgMergedReader) -> GeoDataData {
     d.observation_from_tag = reader.read_variable_text();
     d.observation_to_tag = reader.read_variable_text();
     d.observation_coverage_tag = reader.read_variable_text();
-    let point_count = safe_count(reader.read_bit_long()).min(50_000);
+    let point_count = safe_count(reader.read_bit_long(), reader).min(50_000);
     d.mesh_points.reserve(point_count as usize);
     for _ in 0..point_count {
         d.mesh_points
             .push((reader.read_2raw_double(), reader.read_2raw_double()));
     }
-    let face_count = safe_count(reader.read_bit_long()).min(50_000);
+    let face_count = safe_count(reader.read_bit_long(), reader).min(50_000);
     d.mesh_faces.reserve(face_count as usize);
     for _ in 0..face_count {
         d.mesh_faces.push((
@@ -1721,7 +1873,7 @@ pub struct SpatialFilterData {
 /// column-major layout as DXF code 40.
 pub fn read_spatial_filter(reader: &mut DwgMergedReader) -> SpatialFilterData {
     let mut d = SpatialFilterData::default();
-    let num = safe_count(reader.read_bit_short() as i32);
+    let num = safe_count(reader.read_bit_short() as i32, reader);
     for _ in 0..num {
         d.points.push(reader.read_2raw_double());
     }
@@ -1750,12 +1902,16 @@ pub fn read_spatial_filter(reader: &mut DwgMergedReader) -> SpatialFilterData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::dwg::dwg_reference_type::DwgReferenceType;
     use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
     use crate::io::dwg::dwg_version::DwgVersion;
-    use crate::io::dwg::dwg_reference_type::DwgReferenceType;
     use crate::types::DxfVersion;
 
-    fn make_reader(dwg: DwgVersion, dxf: DxfVersion, f: impl FnOnce(&mut DwgMergedWriter)) -> DwgMergedReader {
+    fn make_reader(
+        dwg: DwgVersion,
+        dxf: DxfVersion,
+        f: impl FnOnce(&mut DwgMergedWriter),
+    ) -> DwgMergedReader {
         let mut writer = DwgMergedWriter::new(dwg, dxf);
         f(&mut writer);
         let data = writer.merge();
@@ -1872,8 +2028,12 @@ mod tests {
             w.write_bit_short(1); // front clip on
             w.write_bit_double(2.5); // front clip dist
             w.write_bit_short(0); // back clip off
-            for i in 0..12 { w.write_bit_double(i as f64); } // inverse block transform
-            for i in 0..12 { w.write_bit_double((i + 100) as f64); } // clip bound transform
+            for i in 0..12 {
+                w.write_bit_double(i as f64);
+            } // inverse block transform
+            for i in 0..12 {
+                w.write_bit_double((i + 100) as f64);
+            } // clip bound transform
         });
         let sf = read_spatial_filter(&mut r);
         assert_eq!(sf.points.len(), 2);
@@ -1987,8 +2147,8 @@ mod tests {
         let d = DxfVersion::AC1015;
         let mut r = make_reader(v, d, |w| {
             w.write_bit_long(1); // 1 entry
-            // Layout: sort handles in the DATA section, then owner + entities in
-            // the handle stream.
+                                 // Layout: sort handles in the DATA section, then owner + entities in
+                                 // the handle stream.
             w.write_main_handle(DwgReferenceType::SoftPointer, 0x10); // sort (data)
             w.write_handle(DwgReferenceType::HardPointer, 0x30); // block owner
             w.write_handle(DwgReferenceType::SoftPointer, 0x20); // entity handle

@@ -1,13 +1,14 @@
 //! DXF file reader
 
-mod stream_reader;
-mod text_reader;
 mod binary_reader;
 mod section_reader;
+mod stream_reader;
+mod text_reader;
 
+pub use binary_reader::DxfBinaryReader;
 pub use stream_reader::DxfStreamReader;
 pub use text_reader::DxfTextReader;
-pub use binary_reader::DxfBinaryReader;
+use stream_reader::XDataRecorder;
 
 use section_reader::SectionReader;
 
@@ -16,7 +17,9 @@ use crate::entities::solid3d::AcisVersion;
 use crate::entities::EntityType;
 use crate::error::{DxfError, Result};
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage, SourceFormat};
+use crate::tables::TableEntry;
 use crate::types::Handle;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
@@ -53,6 +56,7 @@ pub struct DxfReader {
     config: DxfReaderConfiguration,
     /// Estimated entity count based on stream size (used for pre-allocation).
     estimated_entities: usize,
+    source_path: Option<String>,
 }
 
 impl DxfReader {
@@ -70,22 +74,24 @@ impl DxfReader {
 
         // Create appropriate reader
         let reader: Box<dyn DxfStreamReader> = if is_binary {
-            Box::new(DxfBinaryReader::new(buf_reader)?)
+            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(buf_reader)?)))
         } else {
             // Seek back to start for text DXF files
             buf_reader.seek(std::io::SeekFrom::Start(0))?;
-            Box::new(DxfTextReader::new(buf_reader)?)
+            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(buf_reader)?)))
         };
 
         Ok(Self {
             reader,
             config: DxfReaderConfiguration::default(),
             estimated_entities,
+            source_path: None,
         })
     }
 
     /// Create a new DXF reader from a file path
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let source_path = Some(path.as_ref().to_string_lossy().into_owned());
         let file = File::open(path)?;
         let mut buf_reader = BufReader::with_capacity(64 * 1024, file);
 
@@ -93,42 +99,43 @@ impl DxfReader {
         let stream_size = buf_reader.seek(std::io::SeekFrom::End(0)).unwrap_or(0);
         buf_reader.seek(std::io::SeekFrom::Start(0))?;
         let estimated_entities = (stream_size as usize / 300).max(16);
-        
+
         // Detect if binary
         let is_binary = Self::is_binary(&mut buf_reader)?;
-        
+
         // Create appropriate reader
         let reader: Box<dyn DxfStreamReader> = if is_binary {
-            Box::new(DxfBinaryReader::new(buf_reader)?)
+            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(buf_reader)?)))
         } else {
             // Seek back to start for text DXF files
             buf_reader.seek(std::io::SeekFrom::Start(0))?;
-            Box::new(DxfTextReader::new(buf_reader)?)
+            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(buf_reader)?)))
         };
-        
+
         Ok(Self {
             reader,
             config: DxfReaderConfiguration::default(),
             estimated_entities,
+            source_path,
         })
     }
-    
+
     /// Check if a stream contains binary DXF data
     fn is_binary<R: Read + Seek>(reader: &mut R) -> Result<bool> {
         const SENTINEL: &[u8] = b"AutoCAD Binary DXF";
         let mut buffer = vec![0u8; SENTINEL.len()];
-        
+
         // Try to read the sentinel bytes
         let bytes_read = reader.read(&mut buffer)?;
-        
+
         // Always seek back to start after checking
         reader.seek(std::io::SeekFrom::Start(0))?;
-        
+
         // If file is too small or doesn't match, it's not binary
         if bytes_read < SENTINEL.len() {
             return Ok(false);
         }
-        
+
         Ok(buffer == SENTINEL)
     }
 
@@ -159,6 +166,13 @@ impl DxfReader {
         self.read_with_stats().map(|outcome| outcome.document)
     }
 
+    /// Recover as much usable drawing data as possible and apply conservative
+    /// document repairs. Recovery always enables failsafe parsing.
+    pub fn recover(mut self) -> Result<crate::io::recover::RecoverOutcome> {
+        self.config.failsafe = true;
+        crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
+    }
+
     /// Read a DXF file and return the document with source/decode statistics.
     pub fn read_with_stats(mut self) -> Result<crate::io::read::ReadOutcome> {
         // Set default encoding if provided
@@ -172,7 +186,14 @@ impl DxfReader {
         let mut document = CadDocument::new();
         document.entities.reserve(self.estimated_entities);
         document.entity_index.reserve(self.estimated_entities);
-        
+
+        // Snapshot the handles initialize_defaults() handed to its well-known
+        // table entries. The file may reuse one of those handles for its own
+        // records while lacking the default entry itself; re-handling that
+        // case after parsing prevents duplicate handles in written output
+        // (issue #51 comment by Apicqq).
+        let default_entry_handles = snapshot_default_entry_handles(&document);
+
         // Read all sections
         let failsafe = self.config.failsafe;
         let mut source_sections = 0usize;
@@ -186,17 +207,20 @@ impl DxfReader {
         loop {
             let pair = match self.reader.read_pair() {
                 Ok(Some(pair)) => pair,
-                Ok(None) if failsafe && decoded_source_records > 0 => {
+                Ok(None) if failsafe => {
                     let message = "Drawing stream ended before the EOF marker".to_string();
                     document.notifications.notify(
                         crate::notification::NotificationType::Error,
                         message.clone(),
                     );
-                    push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                        "stream-ended-early",
-                        ReadStage::RecordStream,
-                        message,
-                    ));
+                    push_read_diagnostic(
+                        &mut diagnostics,
+                        self.read_diagnostic(
+                            "stream-ended-early",
+                            ReadStage::RecordStream,
+                            message,
+                        ),
+                    );
                     break;
                 }
                 Ok(None) => {
@@ -204,17 +228,20 @@ impl DxfReader {
                         "drawing stream ended before the EOF marker".to_string(),
                     ));
                 }
-                Err(error) if failsafe && decoded_source_records > 0 => {
+                Err(error) if failsafe => {
                     let message = format!("Error reading drawing stream: {}", error);
                     document.notifications.notify(
                         crate::notification::NotificationType::Error,
                         message.clone(),
                     );
-                    push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                        "stream-read-failed",
-                        ReadStage::RecordStream,
-                        message,
-                    ));
+                    push_read_diagnostic(
+                        &mut diagnostics,
+                        self.read_diagnostic(
+                            "stream-read-failed",
+                            ReadStage::RecordStream,
+                            message,
+                        ),
+                    );
                     break;
                 }
                 Err(error) => return Err(error),
@@ -223,17 +250,20 @@ impl DxfReader {
                 // Read section name
                 let section_pair = match self.reader.read_pair() {
                     Ok(Some(section_pair)) => Some(section_pair),
-                    Ok(None) if failsafe && decoded_source_records > 0 => {
+                    Ok(None) if failsafe => {
                         let message = "Drawing stream ended before the section name".to_string();
                         document.notifications.notify(
                             crate::notification::NotificationType::Error,
                             message.clone(),
                         );
-                        push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                            "section-name-missing",
-                            ReadStage::Section,
-                            message,
-                        ));
+                        push_read_diagnostic(
+                            &mut diagnostics,
+                            self.read_diagnostic(
+                                "section-name-missing",
+                                ReadStage::Section,
+                                message,
+                            ),
+                        );
                         break;
                     }
                     Ok(None) => {
@@ -241,17 +271,20 @@ impl DxfReader {
                             "drawing stream ended before the section name".to_string(),
                         ));
                     }
-                    Err(error) if failsafe && decoded_source_records > 0 => {
+                    Err(error) if failsafe => {
                         let message = format!("Error reading section name: {}", error);
                         document.notifications.notify(
                             crate::notification::NotificationType::Error,
                             message.clone(),
                         );
-                        push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                            "section-name-read-failed",
-                            ReadStage::Section,
-                            message,
-                        ));
+                        push_read_diagnostic(
+                            &mut diagnostics,
+                            self.read_diagnostic(
+                                "section-name-read-failed",
+                                ReadStage::Section,
+                                message,
+                            ),
+                        );
                         break;
                     }
                     Err(error) => return Err(error),
@@ -270,18 +303,26 @@ impl DxfReader {
                             "TABLES" => self.read_tables_section(
                                 &mut document,
                                 &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
                             ),
                             "BLOCKS" => self.read_blocks_section(
                                 &mut document,
                                 &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
                             ),
                             "ENTITIES" => self.read_entities_section(
                                 &mut document,
                                 &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
                             ),
                             "OBJECTS" => self.read_objects_section(
                                 &mut document,
                                 &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
                             ),
                             "ACDSDATA" => self.read_acdsdata_section(&mut document),
                             "THUMBNAILIMAGE" => {
@@ -300,15 +341,15 @@ impl DxfReader {
                         if carries_records {
                             source_sections = source_sections.saturating_add(1);
                             record_stream_read = true;
-                            let decoded =
-                                decoded_source_records.saturating_sub(decoded_before);
+                            let decoded = decoded_source_records.saturating_sub(decoded_before);
                             source_records = source_records.saturating_add(decoded);
                         }
 
                         // In failsafe mode, catch errors and continue
                         if let Err(e) = result {
                             if failsafe {
-                                let message = format!("Error reading {} section: {}", section_name, e);
+                                let message =
+                                    format!("Error reading {} section: {}", section_name, e);
                                 document.notifications.notify(
                                     crate::notification::NotificationType::Error,
                                     message.clone(),
@@ -320,8 +361,7 @@ impl DxfReader {
                                 );
                                 diagnostic.section = Some(section_name.clone());
                                 push_read_diagnostic(&mut diagnostics, diagnostic);
-                                skipped_source_records =
-                                    skipped_source_records.saturating_add(1);
+                                skipped_source_records = skipped_source_records.saturating_add(1);
                                 // Try to skip to the end of the section
                                 let _ = self.skip_section();
                             } else {
@@ -336,8 +376,18 @@ impl DxfReader {
             }
         }
 
-        // Post-read resolution: assign owner handles and update next_handle
+        // Post-read resolution: advance the allocator past every file-sourced
+        // identity before re-handling surviving defaults, then assign owners
+        // and repair cross-references.
+        document.synchronize_handle_allocator();
+        rehandle_colliding_default_entries(&mut document, &default_entry_handles);
         document.resolve_references();
+        // Must follow `resolve_references`: handle-less legacy table records
+        // (R12 STYLE entries) only receive their handles there, so running this
+        // earlier would resolve every reference to a null handle.
+        rewire_stale_text_style_references(&mut document);
+        rewire_dangling_layout_block_records(&mut document);
+        document.ensure_model_layout();
 
         // Pre-R2004 (R2000/R14) down-saved gradient hatches keep their gradient
         // in the ACAD round-trip metadata (GradientColor1/2ACI EED + an
@@ -365,9 +415,12 @@ impl DxfReader {
             stream_completed,
             diagnostics,
         );
+        document.source_path = self.source_path.take();
+        crate::objects::restore_visual_style_roundtrip(&mut document);
+        crate::objects::restore_table_style_roundtrip(&mut document);
         Ok(crate::io::read::ReadOutcome::new(document, stats))
     }
-    
+
     /// Read the HEADER section
     fn read_header_section(&mut self, document: &mut CadDocument) -> Result<()> {
         let mut section_reader = SectionReader::new(&mut self.reader);
@@ -385,10 +438,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_tables(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "TABLES",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -397,10 +460,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_blocks(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "BLOCKS",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -409,10 +482,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_entities(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "ENTITIES",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -421,13 +504,52 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_objects(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "OBJECTS",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
-    
+
+    fn collect_section_recovery(
+        section_reader: &mut SectionReader<'_>,
+        document: &mut CadDocument,
+        section: &str,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
+    ) {
+        *skipped_records = skipped_records.saturating_add(section_reader.skipped_records());
+        for recovery in section_reader.take_recovery_errors() {
+            let message = format!("Error reading {} record: {}", section, recovery.message);
+            document.notifications.notify(
+                crate::notification::NotificationType::Error,
+                message.clone(),
+            );
+            let mut diagnostic = ReadDiagnostic::new(
+                "record-read-failed",
+                ReadStage::RecordStream,
+                message,
+            );
+            diagnostic.section = Some(section.to_string());
+            diagnostic.source_offset = recovery.context.source_offset;
+            diagnostic.source_offset_basis = Some("file-byte".to_string());
+            diagnostic.source_line = recovery.context.source_line;
+            diagnostic.record_handle = recovery.context.record_handle;
+            diagnostic.record_type = recovery.context.record_type;
+            push_read_diagnostic(diagnostics, diagnostic);
+        }
+    }
+
     /// Read the ACDSDATA section (the AcDb data store).
     ///
     /// From R2013 (AC1027) on, a 3D solid / region / body / surface no longer
@@ -546,5 +668,307 @@ impl DxfReader {
             }
         }
         Ok(())
+    }
+}
+
+/// Snapshot the handles `initialize_defaults()` handed to its well-known
+/// table entries: (table, entry name) → handle.
+fn snapshot_default_entry_handles(document: &CadDocument) -> HashMap<(&'static str, String), u64> {
+    let mut map: HashMap<(&'static str, String), u64> = HashMap::new();
+    macro_rules! snapshot {
+        ($tag:literal, $table:expr) => {
+            for entry in $table.iter() {
+                let handle = entry.handle().value();
+                if handle != 0 {
+                    map.insert(($tag, entry.name().to_string()), handle);
+                }
+            }
+        };
+    }
+    snapshot!("layers", document.layers);
+    snapshot!("line_types", document.line_types);
+    snapshot!("text_styles", document.text_styles);
+    snapshot!("dim_styles", document.dim_styles);
+    snapshot!("app_ids", document.app_ids);
+    snapshot!("views", document.views);
+    snapshot!("vports", document.vports);
+    snapshot!("ucss", document.ucss);
+    snapshot!("vx_table", document.vx_table);
+    snapshot!("block_records", document.block_records);
+    map
+}
+
+/// Re-handle surviving `initialize_defaults()` entries whose handles the
+/// file reused for its own records.
+///
+/// `CadDocument::new()` creates well-known entries (Standard text style and
+/// dimstyle, ByLayer/ByBlock linetypes, ...) before the file is parsed. When
+/// the file lacks such an entry but uses its handle for one of its own
+/// records, the writer would emit two records with the same handle — a hard
+/// integrity error CAD applications reject. Nothing inside the file
+/// references a default the file does not contain, so the surviving default
+/// is moved to a fresh handle and header references still pointing at it
+/// follow (issue #51 comment by Apicqq).
+fn rehandle_colliding_default_entries(
+    document: &mut CadDocument,
+    defaults: &HashMap<(&'static str, String), u64>,
+) {
+    if defaults.is_empty() {
+        return;
+    }
+
+    // Count how often every handle occurs across everything that is
+    // written: table entries, block-record placeholder handles, entities
+    // and objects.
+    let mut usage: HashMap<u64, usize> = HashMap::new();
+    macro_rules! count {
+        ($handle:expr) => {{
+            let handle: u64 = $handle;
+            if handle != 0 {
+                *usage.entry(handle).or_insert(0) += 1;
+            }
+        }};
+    }
+    macro_rules! count_table {
+        ($table:expr) => {
+            for entry in $table.iter() {
+                count!(entry.handle().value());
+            }
+        };
+    }
+    count_table!(document.layers);
+    count_table!(document.line_types);
+    count_table!(document.text_styles);
+    count_table!(document.dim_styles);
+    count_table!(document.app_ids);
+    count_table!(document.views);
+    count_table!(document.vports);
+    count_table!(document.ucss);
+    count_table!(document.vx_table);
+    count_table!(document.block_records);
+    for br in document.block_records.iter() {
+        count!(br.block_entity_handle.value());
+        count!(br.block_end_handle.value());
+    }
+    for entity in document.entities() {
+        count!(entity.common().handle.value());
+    }
+    for handle in document.objects.keys() {
+        count!(handle.value());
+    }
+
+    let collides = |tag: &'static str, name: &str, handle: u64| -> bool {
+        handle != 0
+            && defaults.get(&(tag, name.to_string())) == Some(&handle)
+            && usage.get(&handle).copied().unwrap_or(0) > 1
+    };
+
+    // Collect (tag, name, old handle) candidates first, then apply, in a
+    // deterministic table order.
+    let mut moves: Vec<(&'static str, String, u64)> = Vec::new();
+    macro_rules! collect {
+        ($tag:literal, $table:expr) => {
+            for entry in $table.iter() {
+                if collides($tag, entry.name(), entry.handle().value()) {
+                    moves.push(($tag, entry.name().to_string(), entry.handle().value()));
+                }
+            }
+        };
+    }
+    collect!("layers", document.layers);
+    collect!("line_types", document.line_types);
+    collect!("text_styles", document.text_styles);
+    collect!("dim_styles", document.dim_styles);
+    collect!("app_ids", document.app_ids);
+    collect!("views", document.views);
+    collect!("vports", document.vports);
+    collect!("ucss", document.ucss);
+    collect!("vx_table", document.vx_table);
+    collect!("block_records", document.block_records);
+
+    for (tag, name, old) in moves {
+        let new = document.allocate_handle();
+        macro_rules! apply {
+            ($t:literal, $table:expr) => {
+                if tag == $t {
+                    if let Some(entry) = $table.get_mut(&name) {
+                        entry.set_handle(new);
+                    }
+                }
+            };
+        }
+        apply!("layers", document.layers);
+        apply!("line_types", document.line_types);
+        apply!("text_styles", document.text_styles);
+        apply!("dim_styles", document.dim_styles);
+        apply!("app_ids", document.app_ids);
+        apply!("views", document.views);
+        apply!("vports", document.vports);
+        apply!("ucss", document.ucss);
+        apply!("vx_table", document.vx_table);
+        apply!("block_records", document.block_records);
+
+        // Header references that still point at the moved default follow,
+        // but only those selecting an entry of the moved one's table: a
+        // default APPID sharing the file's `*Model_Space` handle must not
+        // drag the model-space header reference along (#64).
+        let header = &mut document.header;
+        macro_rules! follow {
+            ($field:ident, $t:literal) => {
+                if tag == $t && header.$field.value() == old {
+                    header.$field = new;
+                }
+            };
+        }
+        follow!(current_layer_handle, "layers");
+        follow!(continuous_linetype_handle, "line_types");
+        follow!(bylayer_linetype_handle, "line_types");
+        follow!(current_linetype_handle, "line_types");
+        follow!(byblock_linetype_handle, "line_types");
+        follow!(current_text_style_handle, "text_styles");
+        follow!(dim_text_style_handle, "text_styles");
+        follow!(current_dimstyle_handle, "dim_styles");
+        follow!(model_space_block_handle, "block_records");
+        follow!(paper_space_block_handle, "block_records");
+        follow!(dim_linetype_handle, "line_types");
+        follow!(dim_linetype1_handle, "line_types");
+        follow!(dim_linetype2_handle, "line_types");
+
+        // Default entries cross-referencing the moved one (the Standard
+        // dimstyle points at the Standard text style).
+        if tag == "text_styles" {
+            for ds in document.dim_styles.iter_mut() {
+                if ds.dimtxsty_handle.value() == old {
+                    ds.dimtxsty_handle = new;
+                }
+            }
+        }
+    }
+}
+
+fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
+    use crate::objects::ObjectType;
+
+    let records: HashMap<u64, String> = document
+        .block_records
+        .iter()
+        .map(|record| (record.handle.value(), record.name.to_ascii_lowercase()))
+        .collect();
+    let mut dangling = Vec::new();
+    let mut owned = std::collections::HashSet::new();
+    for (handle, object) in &document.objects {
+        if let ObjectType::Layout(layout) = object {
+            if records.contains_key(&layout.block_record.value()) {
+                owned.insert(layout.block_record.value());
+            } else {
+                dangling.push((layout.tab_order, *handle, layout.name.eq_ignore_ascii_case("Model")));
+            }
+        }
+    }
+    if dangling.is_empty() {
+        return;
+    }
+    dangling.sort();
+
+    // `*Paper_Space` first, then `*Paper_Space0`, `*Paper_Space1`, ...
+    let mut free_paper: Vec<(Option<u64>, u64)> = records
+        .iter()
+        .filter(|(handle, _)| !owned.contains(*handle))
+        .filter_map(|(handle, name)| {
+            let suffix = name.strip_prefix("*paper_space")?;
+            let order = if suffix.is_empty() { None } else { Some(suffix.parse().ok()?) };
+            Some((order, *handle))
+        })
+        .collect();
+    free_paper.sort();
+    let mut free_paper = free_paper.into_iter().map(|(_, handle)| handle);
+    let model = document.header.model_space_block_handle.value();
+
+    for (_, layout_handle, is_model) in dangling {
+        let target = if is_model && records.contains_key(&model) && !owned.contains(&model) {
+            model
+        } else if is_model {
+            continue;
+        } else {
+            let Some(handle) = free_paper.next() else {
+                continue;
+            };
+            handle
+        };
+        owned.insert(target);
+        if let Some(ObjectType::Layout(layout)) = document.objects.get_mut(&layout_handle) {
+            layout.block_record = Handle::new(target);
+        }
+        if let Some(record) = document
+            .block_records
+            .iter_mut()
+            .find(|record| record.handle.value() == target)
+        {
+            record.layout = layout_handle;
+        }
+    }
+}
+
+/// Re-point text-style handles on default records that no longer resolve to a
+/// text style.
+///
+/// The default Standard DIMSTYLE and Standard MLEADERSTYLE both wire their
+/// text-style reference to the default Standard TEXT STYLE handle. When the
+/// input file replaces that text style with its own record at a different
+/// handle, the surviving default is left pointing at a numeric handle the file
+/// has since given to an unrelated record - e.g. the ByBlock linetype - and the
+/// writer emits a `340`/`342` that consumers resolve to the wrong table
+/// (issues #64 and #68). Re-point such stale handles at the file's text style
+/// of the same name.
+fn rewire_stale_text_style_references(document: &mut CadDocument) {
+    let text_style_handles: std::collections::HashSet<u64> = document
+        .text_styles
+        .iter()
+        .map(|style| style.handle.value())
+        .collect();
+    let is_stale =
+        |handle: Handle| !handle.is_null() && !text_style_handles.contains(&handle.value());
+
+    // The default wiring is Standard -> Standard, so a stale reference is
+    // re-pointed at the text style carrying the same name as the record that
+    // holds it. When no such text style exists the handle is left alone rather
+    // than guessed at.
+    let resolve = |document: &CadDocument, name: &str| -> Option<Handle> {
+        document.text_styles.get(name).map(|s| s.handle)
+    };
+
+    // ── DIMSTYLE (group 340) ──
+    let mut stale_names: Vec<String> = Vec::new();
+    for style in document.dim_styles.iter() {
+        if is_stale(style.dimtxsty_handle) {
+            stale_names.push(style.name().to_string());
+        }
+    }
+    for name in stale_names {
+        if let Some(new) = resolve(document, &name) {
+            if let Some(style) = document.dim_styles.get_mut(&name) {
+                style.dimtxsty_handle = new;
+            }
+        }
+    }
+
+    // ── MLEADERSTYLE (group 342) ──
+    let mut stale_styles: Vec<(Handle, String)> = Vec::new();
+    for (handle, object) in document.objects.iter() {
+        if let crate::objects::ObjectType::MultiLeaderStyle(style) = object {
+            if style.text_style_handle.is_some_and(is_stale) {
+                stale_styles.push((*handle, style.name.clone()));
+            }
+        }
+    }
+    for (handle, name) in stale_styles {
+        let Some(new) = resolve(document, &name) else {
+            continue;
+        };
+        if let Some(crate::objects::ObjectType::MultiLeaderStyle(style)) =
+            document.objects.get_mut(&handle)
+        {
+            style.text_style_handle = Some(new);
+        }
     }
 }

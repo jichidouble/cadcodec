@@ -1,12 +1,11 @@
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::objects::{
     DgnLineStyleData, DgnLsComponentData, DgnLsComponentType, DgnLsCompoundComponent,
-    DgnLsCompoundEntry, DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent,
-    DgnLsStroke, DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
+    DgnLsCompoundEntry, DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent, DgnLsStroke,
+    DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
 };
 use crate::types::Handle;
 
-const MAX_COMPONENT_ITEMS: i32 = 100_000;
 
 pub fn read_dgn_line_style_data(
     reader: &mut DwgMergedReader,
@@ -40,17 +39,15 @@ pub fn read_dgn_line_style_data(
     let scale = reader.read_bit_double();
     let property_flags = read_byte(reader);
     let component = match kind {
-        DgnLsComponentType::Symbol => {
-            DgnLsComponentData::Symbol(DgnLsSymbolComponent {
-                stored_unit_scale: reader.read_bit_double(),
-                unit_scale: reader.read_bit_double(),
-                has_unit_scale: reader.read_bit(),
-                is_3d: reader.read_bit(),
-                block: Handle::from(reader.read_handle()),
-            })
-        }
+        DgnLsComponentType::Symbol => DgnLsComponentData::Symbol(DgnLsSymbolComponent {
+            stored_unit_scale: reader.read_bit_double(),
+            unit_scale: reader.read_bit_double(),
+            has_unit_scale: reader.read_bit(),
+            is_3d: reader.read_bit(),
+            block: Handle::from(reader.read_handle()),
+        }),
         DgnLsComponentType::Compound => {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let offsets = (0..count)
                 .map(|_| reader.read_bit_double())
                 .collect::<Vec<_>>();
@@ -63,11 +60,9 @@ pub fn read_dgn_line_style_data(
                 .collect();
             DgnLsComponentData::Compound(DgnLsCompoundComponent { entries })
         }
-        DgnLsComponentType::Stroke => {
-            DgnLsComponentData::Stroke(read_stroke_pattern(reader))
-        }
+        DgnLsComponentType::Stroke => DgnLsComponentData::Stroke(read_stroke_pattern(reader)),
         DgnLsComponentType::Point => {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut symbols = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 symbols.push(DgnLsSymbolReference {
@@ -131,8 +126,8 @@ fn read_byte(reader: &mut DwgMergedReader) -> u8 {
     reader.read_bytes(1).first().copied().unwrap_or(0)
 }
 
-fn safe_count(value: i32) -> i32 {
-    value.clamp(0, MAX_COMPONENT_ITEMS)
+fn safe_count(value: i32, reader: &DwgMergedReader) -> i32 {
+    reader.checked_count(i64::from(value)) as i32
 }
 
 fn read_stroke_pattern(reader: &mut DwgMergedReader) -> DgnLsStrokePattern {
@@ -143,7 +138,7 @@ fn read_stroke_pattern(reader: &mut DwgMergedReader) -> DgnLsStrokePattern {
     let phase = reader.read_bit_double();
     let phase_mode =
         DgnLsPhaseMode::from_code(((reader.read_bit() as u8) << 1) | reader.read_bit() as u8);
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let mut strokes = Vec::with_capacity(count as usize);
     for _ in 0..count {
         strokes.push(DgnLsStroke {

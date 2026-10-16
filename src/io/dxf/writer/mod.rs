@@ -1,14 +1,14 @@
 //! DXF writer module
 
-mod stream_writer;
-mod text_writer;
 mod binary_writer;
 mod section_writer;
+mod stream_writer;
+mod text_writer;
 
-pub use stream_writer::{DxfStreamWriter, DxfStreamWriterExt, value_type_for_code};
-pub use text_writer::DxfTextWriter;
 pub use binary_writer::DxfBinaryWriter;
 pub use section_writer::SectionWriter;
+pub use stream_writer::{value_type_for_code, DxfStreamWriter, DxfStreamWriterExt};
+pub use text_writer::DxfTextWriter;
 
 use crate::document::CadDocument;
 use crate::entities::EntityType;
@@ -45,7 +45,7 @@ impl<'a> DxfWriter<'a> {
     pub fn set_binary(&mut self, binary: bool) {
         self.binary = binary;
     }
-    
+
     /// Write to a file
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let file = File::create(path)?;
@@ -55,13 +55,30 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to any writer
     pub fn write_to_writer<W: Write>(&self, writer: W) -> Result<()> {
+        // BricsCAD's binary DXF importer rejects the R2000/R2004 headers even
+        // when their records are otherwise valid.  The same records are
+        // accepted as R2010 binary DXF, whose strings are UTF-8.  Keep this
+        // compatibility promotion local to binary output; ASCII and DWG
+        // continue to preserve the requested legacy version and code page.
+        let output_version = self.output_version();
+        let encoding = if output_version < crate::types::DxfVersion::AC1021 {
+            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
+        } else {
+            None
+        };
         if self.binary {
             let mut stream_writer = DxfBinaryWriter::new(writer)?;
-            self.write_dxf(&mut stream_writer)?;
+            if let Some(encoding) = encoding {
+                stream_writer.set_encoding(encoding);
+            }
+            self.write_dxf(&mut stream_writer, output_version)?;
             stream_writer.flush()?;
         } else {
             let mut stream_writer = DxfTextWriter::new(writer);
-            self.write_dxf(&mut stream_writer)?;
+            if let Some(encoding) = encoding {
+                stream_writer.set_encoding(encoding);
+            }
+            self.write_dxf(&mut stream_writer, output_version)?;
             stream_writer.flush()?;
         }
         Ok(())
@@ -78,21 +95,49 @@ impl<'a> DxfWriter<'a> {
     }
 
     /// Write DXF content to a stream writer
-    fn write_dxf<W: DxfStreamWriter>(&self, writer: &mut W) -> Result<()> {
-        let handle_start = compute_max_handle(&self.document);
-        let extra_handles = count_extra_handles(&self.document);
+    fn write_dxf<W: DxfStreamWriter>(
+        &self,
+        writer: &mut W,
+        output_version: crate::types::DxfVersion,
+    ) -> Result<()> {
+        let mut prepared = crate::io::loft_parameters::prepared(self.document);
+        // DXF and DWG share the same ownership graph. Repair table-backed
+        // entities before either writer snapshots handles, otherwise an
+        // ACAD_TABLE can emit a null/nonexistent block-record pointer.
+        crate::io::dwg::dwg_writer::prepare_database_references(&mut prepared);
+        // An in-place table rename leaves the entry keyed under its old name,
+        // so entity layer/linetype lookups miss and reference a name the
+        // written table no longer defines (issue #80).
+        crate::io::dwg::dwg_writer::prepare_table_keys(&mut prepared);
+        crate::io::dwg::dwg_writer::prepare_active_viewport_elevation(&mut prepared);
+        self.write_prepared_dxf(writer, prepared.as_ref(), output_version)
+    }
+
+    fn write_prepared_dxf<W: DxfStreamWriter>(
+        &self,
+        writer: &mut W,
+        document: &CadDocument,
+        output_version: crate::types::DxfVersion,
+    ) -> Result<()> {
+        let handle_start = compute_max_handle(document);
+        // Count against the version actually emitted, not the one the document
+        // was loaded as, so the handle budget matches what the writer produces.
+        let extra_handles = count_extra_handles(
+            document,
+            SectionWriter::<W>::writable_version(output_version),
+        );
         let handle_seed = handle_start + extra_handles + 1;
         let mut section_writer = SectionWriter::new(writer, handle_start, handle_seed);
-        section_writer.set_version(self.document.version);
-        section_writer.build_valid_handles(&self.document);
+        section_writer.set_version(output_version);
+        section_writer.build_valid_handles(document);
 
         // Write all sections
-        section_writer.write_header(&self.document)?;
-        section_writer.write_classes(&self.document)?;
-        section_writer.write_tables(&self.document)?;
-        section_writer.write_blocks(&self.document)?;
-        section_writer.write_entities(&self.document)?;
-        section_writer.write_objects(&self.document)?;
+        section_writer.write_header(document)?;
+        section_writer.write_classes(document)?;
+        section_writer.write_tables(document)?;
+        section_writer.write_blocks(document)?;
+        section_writer.write_entities(document)?;
+        section_writer.write_objects(document)?;
         section_writer.write_acdsdata()?;
 
         // Write EOF
@@ -101,13 +146,21 @@ impl<'a> DxfWriter<'a> {
         Ok(())
     }
 
+    fn output_version(&self) -> crate::types::DxfVersion {
+        if self.binary && self.document.version < crate::types::DxfVersion::AC1021 {
+            crate::types::DxfVersion::AC1024
+        } else {
+            self.document.version
+        }
+    }
+
     /// Get a reference to the document
     pub fn document(&self) -> &CadDocument {
         &self.document
     }
 }
 
-fn count_extra_handles(document: &CadDocument) -> u64 {
+fn count_extra_handles(document: &CadDocument, version: crate::types::DxfVersion) -> u64 {
     use crate::objects::ObjectType;
 
     let mut count = 0u64;
@@ -119,6 +172,13 @@ fn count_extra_handles(document: &CadDocument) -> u64 {
                 count += polyline.vertices.len() as u64 + 1;
             }
             EntityType::Polyline2D(polyline) => {
+                // Plain 2D polylines down-save as LWPOLYLINE for R2000+,
+                // which emits no child records (see SectionWriter).
+                if version >= crate::types::DxfVersion::AC1015
+                    && section_writer::polyline2d_downsaves_to_lwpolyline(polyline)
+                {
+                    continue;
+                }
                 // Vertices + SEQEND all use allocate_handle()
                 count += polyline.vertices.len() as u64 + 1;
             }
@@ -156,8 +216,13 @@ fn count_extra_handles(document: &CadDocument) -> u64 {
                 count += 1;
             }
             EntityType::Insert(insert) => {
-                // SEQEND for attribute sequence
                 if insert.has_attributes() {
+                    count += insert
+                        .attributes
+                        .iter()
+                        .filter(|attribute| attribute.common.handle.is_null())
+                        .count() as u64;
+                    // SEQEND for attribute sequence
                     count += 1;
                 }
             }
@@ -191,34 +256,91 @@ fn compute_max_handle(document: &CadDocument) -> u64 {
 
     for entity in document.entities() {
         let h = entity.common().handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
+        if let EntityType::Insert(insert) = entity {
+            for attribute in &insert.attributes {
+                max = max.max(attribute.common.handle.value().saturating_add(1));
+            }
+        }
     }
     for (handle, _) in &document.objects {
         let h = handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
     }
     for br in document.block_records.iter() {
         let h = br.handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
         for eh in &br.entity_handles {
             let h = eh.value();
-            if h >= max { max = h + 1; }
+            if h >= max {
+                max = h + 1;
+            }
         }
         // BLOCK/ENDBLK markers are excluded from document.entities(), so scan
         // their handles here explicitly to avoid re-issuing them.
         let h = br.block_entity_handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
         let h = br.block_end_handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
     }
-    for r in document.layers.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.line_types.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.text_styles.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.dim_styles.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.app_ids.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.views.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.vports.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.ucss.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
+    for r in document.layers.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.line_types.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.text_styles.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.dim_styles.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.app_ids.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.views.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.vports.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.ucss.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
 
     max
 }
@@ -234,4 +356,3 @@ pub fn write_binary_dxf<P: AsRef<Path>>(document: &CadDocument, path: P) -> Resu
     let writer = DxfWriter::new_binary(document);
     writer.write_to_file(path)
 }
-

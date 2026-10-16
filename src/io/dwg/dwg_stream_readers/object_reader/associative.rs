@@ -6,12 +6,64 @@ use crate::types::{DxfVersion, Handle};
 
 use super::safe_count;
 
+fn read_edge_curve(
+    reader: &mut DwgMergedReader,
+    curve_type: i32,
+    out: &mut Vec<AssocCurveValue>,
+    depth: usize,
+) {
+    let point = |reader: &mut DwgMergedReader| AssocCurveValue::Point(reader.read_3bit_double());
+    let real = |reader: &mut DwgMergedReader| AssocCurveValue::Real(reader.read_bit_double());
+    match curve_type {
+        // Arc and ellipse: three vectors, then four or five reals.
+        11 | 17 => {
+            for _ in 0..3 {
+                out.push(point(reader));
+            }
+            for _ in 0..if curve_type == 11 { 4 } else { 5 } {
+                out.push(real(reader));
+            }
+        }
+        23 => {
+            out.push(point(reader));
+            out.push(point(reader));
+        }
+        42 => {
+            out.push(AssocCurveValue::Bool(reader.read_bit()));
+            out.push(AssocCurveValue::Bool(reader.read_bit()));
+            out.push(AssocCurveValue::Int(reader.read_bit_long()));
+            out.push(real(reader));
+            // Knots, weights and control points: length, physical length and
+            // grow length, then the items.
+            for points in [false, false, true] {
+                let length = reader.read_bit_long();
+                out.push(AssocCurveValue::Int(length));
+                out.push(AssocCurveValue::Int(reader.read_bit_long()));
+                out.push(AssocCurveValue::Int(reader.read_bit_long()));
+                for _ in 0..safe_count(length, reader) {
+                    out.push(if points { point(reader) } else { real(reader) });
+                }
+            }
+        }
+        47 if depth < 8 => {
+            let count = reader.read_bit_long();
+            out.push(AssocCurveValue::Int(count));
+            for _ in 0..safe_count(count, reader) {
+                let part = reader.read_bit_long();
+                out.push(AssocCurveValue::Int(part));
+                read_edge_curve(reader, part, out, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle(reader: &mut DwgMergedReader) -> Handle {
     Handle::from(reader.read_handle())
 }
 
 fn read_handles(reader: &mut DwgMergedReader, count: i32) -> Vec<Handle> {
-    let count = safe_count(count);
+    let count = safe_count(count, reader);
     let mut values = Vec::with_capacity(count as usize);
     for _ in 0..count {
         values.push(handle(reader));
@@ -21,9 +73,9 @@ fn read_handles(reader: &mut DwgMergedReader, count: i32) -> Vec<Handle> {
 
 fn eval_kind(code: i16) -> u8 {
     match code {
-        i16::MIN..=-1 | 5 | 105 | 320..=329 | 390..=399 => 6,
-        0..=9 | 100..=102 | 300..=309 | 410..=419 | 430..=439 | 470..=479
-        | 999 | 1000..=1009 => 5,
+        // 330-369: soft/hard pointer and owner handles.
+        i16::MIN..=-1 | 5 | 105 | 320..=369 | 390..=399 => 6,
+        0..=9 | 100..=102 | 300..=309 | 410..=419 | 430..=439 | 470..=479 | 999 | 1000..=1009 => 5,
         10..=37 | 110..=139 | 210..=269 | 1010..=1039 | 1043..=1069 => 0,
         38..=59 | 140..=149 | 460..=469 | 1040..=1042 => 1,
         60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 | 1070 => 3,
@@ -55,7 +107,7 @@ fn read_value_param(reader: &mut DwgMergedReader) -> AssocValueParam {
     let class_version = reader.read_bit_long();
     let name = reader.read_variable_text();
     let unit_type = reader.read_bit_long();
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let mut variables = Vec::with_capacity(count as usize);
     for _ in 0..count {
         variables.push(AssocValueParamVariable {
@@ -73,7 +125,7 @@ fn read_value_param(reader: &mut DwgMergedReader) -> AssocValueParam {
 }
 
 fn read_value_params(reader: &mut DwgMergedReader, count: i32) -> Vec<AssocValueParam> {
-    let count = safe_count(count);
+    let count = safe_count(count, reader);
     let mut values = Vec::with_capacity(count as usize);
     for _ in 0..count {
         values.push(read_value_param(reader));
@@ -116,7 +168,7 @@ fn read_action(reader: &mut DwgMergedReader) -> AssocAction {
     let action_body = handle(reader);
     let action_index = reader.read_bit_long();
     let max_dependency_index = reader.read_bit_long();
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let mut dependencies = Vec::with_capacity(count as usize);
     for _ in 0..count {
         dependencies.push(AssocActionDependency {
@@ -184,7 +236,7 @@ fn read_parameter_body(
     let count = reader.read_bit_long();
     let dependencies = read_handles(reader, count);
     let marker = reader.read_bit_long();
-    let value_count = safe_count(reader.read_bit_long());
+    let value_count = safe_count(reader.read_bit_long(), reader);
     let (empty_value_marker, dependency) = if value_count == 0 {
         (reader.read_bit_long(), handle(reader))
     } else {
@@ -322,13 +374,14 @@ fn read_annotation_action(
     }
     value.annotation = read_annotation_base(reader, version, dxf_version);
     value.class_version = match kind {
-        AssocAnnotationKind::ThreePointAngularDimension
-        | AssocAnnotationKind::RotatedDimension => reader.read_bit_short() as i32,
+        AssocAnnotationKind::ThreePointAngularDimension | AssocAnnotationKind::RotatedDimension => {
+            reader.read_bit_short() as i32
+        }
         _ => reader.read_bit_long(),
     };
     match kind {
         AssocAnnotationKind::MLeader => {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             value.actions.reserve(count as usize);
             for _ in 0..count {
                 value.actions.push(AssocAnnotationDependency {
@@ -414,6 +467,13 @@ fn read_array_action_body(
     let parameter_body = read_parameter_body(reader, version, dxf_version);
     let body_version = reader.read_bit_long();
     let parameter_block = reader.read_variable_text();
+    let item_list_version = reader.read_bit_long();
+    let count = safe_count(reader.read_bit_long(), reader);
+    let item_class = reader.read_variable_text();
+    let mut items = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        items.push(read_array_item(reader));
+    }
     for item in &mut transform {
         *item = reader.read_bit_double();
     }
@@ -422,13 +482,54 @@ fn read_array_action_body(
         parameter_body,
         version: body_version,
         parameter_block,
+        item_list_version,
+        item_class,
+        items,
         transform,
+    }
+}
+
+fn read_array_item(reader: &mut DwgMergedReader) -> AssocArrayItem {
+    let class_version = reader.read_bit_long();
+    let location = [
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+    ];
+    let flags = reader.read_bit_long();
+    let uses_default_transform = flags & 4 == 0;
+    let mut x_direction = crate::types::Vector3::ZERO;
+    let mut transform = [0.0; 16];
+    if uses_default_transform {
+        x_direction = reader.read_3bit_double();
+    } else {
+        for item in &mut transform {
+            *item = reader.read_bit_double();
+        }
+    }
+    let relative_transform = (flags & 2 != 0).then(|| {
+        let mut matrix = [0.0; 16];
+        for item in &mut matrix {
+            *item = reader.read_bit_double();
+        }
+        matrix
+    });
+    AssocArrayItem {
+        class_version,
+        location,
+        flags,
+        uses_default_transform,
+        x_direction,
+        transform,
+        relative_transform,
+        first_handle: Some(handle(reader)),
+        second_handle: (flags & 0x10 != 0).then(|| handle(reader)),
     }
 }
 
 fn read_array_parameters(reader: &mut DwgMergedReader) -> AssocArrayParameters {
     let version = reader.read_bit_long();
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let class_name = reader.read_variable_text();
     let mut items = Vec::with_capacity(count as usize);
     for _ in 0..count {
@@ -482,8 +583,7 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
     let trans_space = reader.read_bit();
     let rotated_type = reader.read_byte();
     let dimension = handle(reader);
-    let mut references: [Vec<AssocDimensionReference>; 4] =
-        std::array::from_fn(|_| Vec::new());
+    let mut references: [Vec<AssocDimensionReference>; 4] = std::array::from_fn(|_| Vec::new());
     let mut total_references = 0usize;
     for slot in 0..4 {
         if associativity & (1 << slot) == 0 {
@@ -497,20 +597,18 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
             let osnap_type = reader.read_byte();
             let count = reader.read_bit_long();
             let xrefs = read_handles(reader, count);
-            let (main_subent_type, main_gs_marker, xref_paths) =
-                if osnap_type != 0 {
-                    let main_subent_type = reader.read_bit_long();
-                    let main_gs_marker = reader.read_bit_long();
-                    let count = safe_count(reader.read_bit_long());
-                    let mut xref_paths =
-                        Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        xref_paths.push(reader.read_variable_text());
-                    }
-                    (main_subent_type, main_gs_marker, xref_paths)
-                } else {
-                    (0, 0, Vec::new())
-                };
+            let (main_subent_type, main_gs_marker, xref_paths) = if osnap_type != 0 {
+                let main_subent_type = reader.read_bit_long();
+                let main_gs_marker = reader.read_bit_long();
+                let count = safe_count(reader.read_bit_long(), reader);
+                let mut xref_paths = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    xref_paths.push(reader.read_variable_text());
+                }
+                (main_subent_type, main_gs_marker, xref_paths)
+            } else {
+                (0, 0, Vec::new())
+            };
             let osnap_distance = reader.read_bit_double();
             let osnap_point = reader.read_3bit_double();
             let (
@@ -523,7 +621,7 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
                 let intersection_objects = read_handles(reader, count);
                 let intersection_subent_type = reader.read_bit_long();
                 let intersection_gs_marker = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_long());
+                let count = safe_count(reader.read_bit_long(), reader);
                 let mut paths = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     paths.push(reader.read_variable_text());
@@ -574,18 +672,10 @@ fn read_static_pers_subent_manager(reader: &mut DwgMergedReader) -> PersSubentMa
     let marker_two = reader.read_bit_long();
     let associative_step_count = reader.read_bit_long();
     let associative_subent_count = reader.read_bit_long();
-    let count = safe_count(reader.read_bit_long());
-    let mut steps = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        steps.push(reader.read_bit_long());
-    }
-    let mut subents = Vec::new();
-    if reader.main_remaining_bits() > 0 {
-        let count = safe_count(reader.read_bit_long());
-        subents.reserve(count as usize);
-        for _ in 0..count {
-            subents.push(reader.read_bit_long());
-        }
+    // The body is a flat run of integers up to the end of the data stream.
+    let mut values = Vec::new();
+    while reader.main_remaining_bits() >= 2 {
+        values.push(reader.read_bit_long());
     }
     PersSubentManager {
         class_version,
@@ -593,8 +683,7 @@ fn read_static_pers_subent_manager(reader: &mut DwgMergedReader) -> PersSubentMa
         marker_two,
         associative_step_count,
         associative_subent_count,
-        steps,
-        subents,
+        values,
     }
 }
 
@@ -605,12 +694,8 @@ fn read_constraint_node_common(
 ) -> AssocConstraintNode {
     let node_id = reader.read_bit_long();
     let status_before = !version.r2013_plus(dxf_version);
-    let mut status = if status_before {
-        reader.read_byte()
-    } else {
-        0
-    };
-    let connection_count = safe_count(reader.read_bit_long());
+    let mut status = if status_before { reader.read_byte() } else { 0 };
+    let connection_count = safe_count(reader.read_bit_long(), reader);
     let mut connections = Vec::with_capacity(connection_count as usize);
     for _ in 0..connection_count {
         connections.push(reader.read_bit_long());
@@ -640,7 +725,6 @@ fn is_plain_geometrical_constraint(class_name: &str) -> bool {
             | "ACEQUALLENGTHCONSTRAINT"
             | "ACEQUALRADIUSCONSTRAINT"
             | "ACFIXEDCONSTRAINT"
-            | "ACHORIZONTALCONSTRAINT"
             | "ACMIDPOINTCONSTRAINT"
             | "ACNORMALCONSTRAINT"
             | "ACPERPENDICULARCONSTRAINT"
@@ -648,23 +732,15 @@ fn is_plain_geometrical_constraint(class_name: &str) -> bool {
             | "ACPOINTCURVECONSTRAINT"
             | "ACSYMMETRICCONSTRAINT"
             | "ACTANGENTCONSTRAINT"
-            | "ACVERTICALCONSTRAINT"
     )
 }
 
 fn read_geometrical_constraint(reader: &mut DwgMergedReader) -> (i32, bool, bool) {
-    (
-        reader.read_bit_long(),
-        reader.read_bit(),
-        reader.read_bit(),
-    )
+    (reader.read_bit_long(), reader.read_bit(), reader.read_bit())
 }
 
-fn read_explicit_constraint(
-    reader: &mut DwgMergedReader,
-) -> (i32, bool, bool, Handle, Handle) {
-    let (owner_id, is_implied, is_active) =
-        read_geometrical_constraint(reader);
+fn read_explicit_constraint(reader: &mut DwgMergedReader) -> (i32, bool, bool, Handle, Handle) {
+    let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
     (
         owner_id,
         is_implied,
@@ -679,6 +755,24 @@ fn read_constraint_node_data(
     class_name: &str,
 ) -> AssocConstraintNodeData {
     match class_name.to_ascii_uppercase().as_str() {
+        "ACG2SMOOTHCONSTRAINT" => {
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
+            let count = safe_count(reader.read_bit_long(), reader);
+            let mut owned_constraint_ids = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                owned_constraint_ids.push(reader.read_bit_long());
+            }
+            AssocConstraintNodeData::Composite {
+                owner_id,
+                is_implied,
+                is_active,
+                owned_constraint_ids,
+            }
+        }
+        "ACHELPPARAMETER" => AssocConstraintNodeData::HelpParameter {
+            value: reader.read_bit_double(),
+            reserved: reader.read_bit(),
+        },
         "ACCONSTRAINEDCIRCLE" => AssocConstraintNodeData::Circle {
             geometry_dependency: handle(reader),
             geometry_node_id: reader.read_bit_long(),
@@ -708,8 +802,7 @@ fn read_constraint_node_data(
             AssocConstraintNodeData::ImplicitPoint {
                 geometry_dependency,
                 geometry_node_id: reader.read_bit_long(),
-                point: (!geometry_dependency.is_null())
-                    .then(|| reader.read_3bit_double()),
+                point: (!geometry_dependency.is_null()).then(|| reader.read_3bit_double()),
                 point_type: reader.read_byte(),
                 point_index: reader.read_bit_long(),
                 curve_id: reader.read_bit_long(),
@@ -720,8 +813,28 @@ fn read_constraint_node_data(
             AssocConstraintNodeData::Point {
                 geometry_dependency,
                 geometry_node_id: reader.read_bit_long(),
-                point: (!geometry_dependency.is_null())
-                    .then(|| reader.read_3bit_double()),
+                point: (!geometry_dependency.is_null()).then(|| reader.read_3bit_double()),
+            }
+        }
+        "ACCONSTRAINEDRIGIDSET" => {
+            let geometry_dependency = handle(reader);
+            let geometry_node_id = reader.read_bit_long();
+            let reserved = reader.read_bit();
+            let mut transform = [0.0; 16];
+            for value in &mut transform {
+                *value = reader.read_bit_double();
+            }
+            let count = safe_count(reader.read_bit_long(), reader);
+            let mut geometry_ids = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                geometry_ids.push(reader.read_bit_long());
+            }
+            AssocConstraintNodeData::RigidSet {
+                geometry_dependency,
+                geometry_node_id,
+                reserved,
+                transform,
+                geometry_ids,
             }
         }
         "ACCONSTRAINEDLINE"
@@ -743,13 +856,8 @@ fn read_constraint_node_data(
             end_point: reader.read_3bit_double(),
         },
         "ACANGLECONSTRAINT" | "AC3POINTANGLECONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(reader);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(reader);
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -759,24 +867,19 @@ fn read_constraint_node_data(
                 sector_type: reader.read_byte(),
             }
         }
-        "ACPARALLELCONSTRAINT" => {
-            let (owner_id, is_implied, is_active) =
-                read_geometrical_constraint(reader);
+        "ACPARALLELCONSTRAINT" | "ACHORIZONTALCONSTRAINT" | "ACVERTICALCONSTRAINT" => {
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
             AssocConstraintNodeData::Parallel {
                 owner_id,
                 is_implied,
                 is_active,
-                datum_line_index: None,
+                datum_line_index: (!class_name.eq_ignore_ascii_case("AcParallelConstraint"))
+                    .then(|| reader.read_bit_long()),
             }
         }
         "ACDISTANCECONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(reader);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(reader);
             let direction_type = reader.read_byte();
             AssocConstraintNodeData::Distance {
                 owner_id,
@@ -785,18 +888,12 @@ fn read_constraint_node_data(
                 value_dependency,
                 dimension_dependency,
                 direction_type,
-                distance: (direction_type != 0)
-                    .then(|| reader.read_3bit_double()),
+                distance: (direction_type != 0).then(|| reader.read_3bit_double()),
             }
         }
         "ACRADIUSDIAMETERCONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(reader);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(reader);
             AssocConstraintNodeData::RadiusDiameter {
                 owner_id,
                 is_implied,
@@ -806,35 +903,76 @@ fn read_constraint_node_data(
                 mode: reader.read_byte(),
             }
         }
-        "ACCONSTRAINEDELLIPSE" => {
-            let (owner_id, is_implied, is_active) =
-                read_geometrical_constraint(reader);
-            AssocConstraintNodeData::Ellipse {
-                owner_id,
-                is_implied,
-                is_active,
-                center: reader.read_3bit_double(),
-                short_axis: reader.read_3bit_double(),
-                axis_ratio: reader.read_bit_double(),
+        "ACCONSTRAINEDELLIPSE" => AssocConstraintNodeData::Ellipse {
+            geometry_dependency: handle(reader),
+            geometry_node_id: reader.read_bit_long(),
+            center: reader.read_3bit_double(),
+            major_axis: reader.read_3bit_double(),
+            axis_ratio: reader.read_bit_double(),
+        },
+        "ACCONSTRAINEDBOUNDEDELLIPSE" => AssocConstraintNodeData::BoundedEllipse {
+            geometry_dependency: handle(reader),
+            geometry_node_id: reader.read_bit_long(),
+            center: reader.read_3bit_double(),
+            major_axis: reader.read_3bit_double(),
+            axis_ratio: reader.read_bit_double(),
+            start_point: reader.read_3bit_double(),
+            end_point: reader.read_3bit_double(),
+        },
+        "ACCONSTRAINEDSPLINE" => {
+            let geometry_dependency = handle(reader);
+            let geometry_node_id = reader.read_bit_long();
+            let rational = reader.read_bit();
+            let periodic = reader.read_bit();
+            let degree = reader.read_bit_long();
+            let knot_tolerance = reader.read_bit_double();
+            let knot_count = safe_count(reader.read_bit_long(), reader);
+            let knot_physical_length = reader.read_bit_long();
+            let knot_grow_length = reader.read_bit_long();
+            let mut knots = Vec::with_capacity(knot_count as usize);
+            for _ in 0..knot_count {
+                knots.push(reader.read_bit_double());
             }
-        }
-        "ACCONSTRAINEDBOUNDEDELLIPSE" => {
-            let (owner_id, is_implied, is_active) =
-                read_geometrical_constraint(reader);
-            AssocConstraintNodeData::BoundedEllipse {
-                owner_id,
-                is_implied,
-                is_active,
-                center: reader.read_3bit_double(),
-                short_axis: reader.read_3bit_double(),
-                axis_ratio: reader.read_bit_double(),
-                start_point: reader.read_3bit_double(),
-                end_point: reader.read_3bit_double(),
+            let weight_count = safe_count(reader.read_bit_long(), reader);
+            let weight_physical_length = reader.read_bit_long();
+            let weight_grow_length = reader.read_bit_long();
+            let mut weights = Vec::with_capacity(weight_count as usize);
+            for _ in 0..weight_count {
+                weights.push(reader.read_bit_double());
+            }
+            let control_point_count = safe_count(reader.read_bit_long(), reader);
+            let control_point_physical_length = reader.read_bit_long();
+            let control_point_grow_length = reader.read_bit_long();
+            let mut control_points = Vec::with_capacity(control_point_count as usize);
+            for _ in 0..control_point_count {
+                control_points.push(reader.read_3bit_double());
+            }
+            let implicit_point_count = safe_count(reader.read_bit_long(), reader);
+            let mut implicit_point_ids = Vec::with_capacity(implicit_point_count as usize);
+            for _ in 0..implicit_point_count {
+                implicit_point_ids.push(reader.read_bit_long());
+            }
+            AssocConstraintNodeData::Spline {
+                geometry_dependency,
+                geometry_node_id,
+                rational,
+                periodic,
+                degree,
+                knot_tolerance,
+                knot_physical_length,
+                knot_grow_length,
+                knots,
+                weight_physical_length,
+                weight_grow_length,
+                weights,
+                control_point_physical_length,
+                control_point_grow_length,
+                control_points,
+                implicit_point_ids,
             }
         }
         _ if is_plain_geometrical_constraint(class_name) => {
-            let (owner_id, is_implied, is_active) =
-                read_geometrical_constraint(reader);
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
             AssocConstraintNodeData::Geometrical {
                 owner_id,
                 is_implied,
@@ -853,26 +991,37 @@ pub fn read_associative_data(
 ) -> Option<AssociativeData> {
     let name = associative_canonical_name(dxf_name);
     let value = match name.as_str() {
-        "ASSOCDEPENDENCY" => {
-            AssociativeData::Dependency(read_dependency(reader))
-        }
-        "ASSOCVALUEDEPENDENCY" => {
-            AssociativeData::ValueDependency(AssocValueDependency {
-                dependency: read_dependency(reader),
-                class_version: reader.read_bit_long(),
-                name: reader.read_variable_text(),
-                value: read_eval_variant(reader),
-            })
-        }
+        "ASSOCDEPENDENCY" => AssociativeData::Dependency(read_dependency(reader)),
+        "ASSOCVALUEDEPENDENCY" => AssociativeData::ValueDependency(AssocValueDependency {
+            dependency: read_dependency(reader),
+            class_version: reader.read_bit_long(),
+            name: reader.read_variable_text(),
+            value: read_eval_variant(reader),
+        }),
         "ASSOCGEOMDEPENDENCY" => {
             let dependency = read_dependency(reader);
             AssociativeData::GeomDependency(AssocGeomDependency {
                 dependency,
                 class_version: reader.read_bit_short(),
                 enabled: reader.read_bit(),
-                persistent_subent: AssocPersistentSubentId {
-                    class_name: reader.read_variable_text(),
-                    dependent_on_compound_object: reader.read_bit(),
+                persistent_subent: {
+                    // Flag, class code, the class's fields, then the
+                    // compound-object bit, which ends the record.
+                    let leading_flag = reader.read_bit();
+                    let class_code = reader.read_bit_long();
+                    let mut values = Vec::new();
+                    while reader.main_remaining_bits() > 1 && values.len() < 64 {
+                        values.push(reader.read_bit_long());
+                    }
+                    AssocPersistentSubentId {
+                        class_name: AssocPersistentSubentId::class_name_for_code(class_code)
+                            .unwrap_or_default()
+                            .to_string(),
+                        dependent_on_compound_object: reader.read_bit(),
+                        class_code,
+                        values,
+                        leading_flag,
+                    }
                 },
             })
         }
@@ -881,7 +1030,7 @@ pub fn read_associative_data(
             let action = read_action(reader);
             let network_version = reader.read_bit_short();
             let network_action_index = reader.read_bit_long();
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut actions = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 actions.push(AssocActionDependency {
@@ -902,54 +1051,52 @@ pub fn read_associative_data(
         name if surface_kind(name).is_some() => AssociativeData::SurfaceActionBody(
             read_surface_action(reader, version, dxf_version, surface_kind(name).unwrap()),
         ),
-        "ASSOCRESTOREENTITYSTATEACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
+        "ASSOCRESTOREENTITYSTATEACTIONBODY" => {
+            AssociativeData::AnnotationActionBody(read_annotation_action(
                 reader,
                 version,
                 dxf_version,
                 AssocAnnotationKind::RestoreEntityState,
-            ),
-        ),
-        "ASSOCMLEADERACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
-                reader,
-                version,
-                dxf_version,
-                AssocAnnotationKind::MLeader,
-            ),
-        ),
-        "ASSOCALIGNEDDIMACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
+            ))
+        }
+        "ASSOCMLEADERACTIONBODY" => AssociativeData::AnnotationActionBody(read_annotation_action(
+            reader,
+            version,
+            dxf_version,
+            AssocAnnotationKind::MLeader,
+        )),
+        "ASSOCALIGNEDDIMACTIONBODY" => {
+            AssociativeData::AnnotationActionBody(read_annotation_action(
                 reader,
                 version,
                 dxf_version,
                 AssocAnnotationKind::AlignedDimension,
-            ),
-        ),
-        "ASSOC3POINTANGULARDIMACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
+            ))
+        }
+        "ASSOC3POINTANGULARDIMACTIONBODY" => {
+            AssociativeData::AnnotationActionBody(read_annotation_action(
                 reader,
                 version,
                 dxf_version,
                 AssocAnnotationKind::ThreePointAngularDimension,
-            ),
-        ),
-        "ASSOCORDINATEDIMACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
+            ))
+        }
+        "ASSOCORDINATEDIMACTIONBODY" => {
+            AssociativeData::AnnotationActionBody(read_annotation_action(
                 reader,
                 version,
                 dxf_version,
                 AssocAnnotationKind::OrdinateDimension,
-            ),
-        ),
-        "ASSOCROTATEDDIMACTIONBODY" => AssociativeData::AnnotationActionBody(
-            read_annotation_action(
+            ))
+        }
+        "ASSOCROTATEDDIMACTIONBODY" => {
+            AssociativeData::AnnotationActionBody(read_annotation_action(
                 reader,
                 version,
                 dxf_version,
                 AssocAnnotationKind::RotatedDimension,
-            ),
-        ),
+            ))
+        }
         "ASSOCPERSSUBENTMANAGER" => {
             let class_version = reader.read_bit_long();
             let markers = [
@@ -957,25 +1104,16 @@ pub fn read_associative_data(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let steps = {
-                let count = safe_count(reader.read_bit_long());
-                let mut result = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    result.push(reader.read_bit_long());
-                }
-                result
-            };
-            let subent_count = reader.read_bit_long();
-            let mut subent_data = Vec::new();
+            // The integers run up to the closing flag; their count is not
+            // stored, so the record end bounds them.
+            let mut values = Vec::new();
             while reader.main_remaining_bits() > 1 {
-                subent_data.push(reader.read_bit_long());
+                values.push(reader.read_bit_long());
             }
             AssociativeData::PersSubentManager(AssocPersSubentManager {
                 class_version,
                 markers,
-                steps,
-                subent_count,
-                subent_data,
+                values,
                 final_flag: reader.read_bit(),
             })
         }
@@ -993,12 +1131,15 @@ pub fn read_associative_data(
                 27 => AssocSubcurveKind::Curve3d,
                 _ => AssocSubcurveKind::None,
             };
+            let mut curve = Vec::new();
+            read_edge_curve(reader, action_type, &mut curve, 0);
             AssociativeData::EdgeActionParam(AssocEdgeActionParam {
                 single_dependency,
                 parameter,
                 has_action,
                 action_type,
                 subcurve_kind,
+                curve,
             })
         }
         "ASSOC2DCONSTRAINTGROUP" => {
@@ -1013,11 +1154,11 @@ pub fn read_associative_data(
             let dependency = handle(reader);
             let count = reader.read_bit_long();
             let actions = read_handles(reader, count);
-            let node_count = safe_count(reader.read_bit_long());
-            let mut nodes = Vec::with_capacity(node_count as usize);
+            let node_count = safe_count(reader.read_bit_long(), reader);
+            let mut nodes = Vec::with_capacity(node_count.saturating_add(1) as usize);
             if node_count > 0 {
                 let root_id = reader.read_bit_long();
-                let connection_count = safe_count(reader.read_bit_long());
+                let connection_count = safe_count(reader.read_bit_long(), reader);
                 let mut connections = Vec::with_capacity(connection_count as usize);
                 for _ in 0..connection_count {
                     connections.push(reader.read_bit_long());
@@ -1030,13 +1171,12 @@ pub fn read_associative_data(
                     registry_flag: false,
                     data: AssocConstraintNodeData::None,
                 });
-                let class_type_count = safe_count(reader.read_bit_long());
+                let class_type_count = safe_count(reader.read_bit_long(), reader);
                 let mut class_types = Vec::with_capacity(class_type_count as usize);
                 for _ in 0..class_type_count {
                     class_types.push(reader.read_variable_text());
                 }
-                let registered_count = safe_count(reader.read_bit_long())
-                    .min(node_count.saturating_sub(1));
+                let registered_count = safe_count(reader.read_bit_long(), reader).min(node_count);
                 let mut registry = Vec::with_capacity(registered_count as usize);
                 for _ in 0..registered_count {
                     let registry_flag = reader.read_bit();
@@ -1050,8 +1190,7 @@ pub fn read_associative_data(
                     registry.push((class_name, node_id, registry_flag));
                 }
                 for (class_name, registered_node_id, registry_flag) in registry {
-                    let mut node =
-                        read_constraint_node_common(reader, version, dxf_version);
+                    let mut node = read_constraint_node_common(reader, version, dxf_version);
                     if node.node_id == 0 {
                         node.node_id = registered_node_id;
                     }
@@ -1105,17 +1244,12 @@ pub fn read_associative_data(
                 reserved,
             })
         }
-        "ASSOCACTIONPARAM" => AssociativeData::ActionParam(read_action_param(
-            reader,
-            version,
-            dxf_version,
-        )),
-        "ASSOCCOMPOUNDACTIONPARAM" => AssociativeData::CompoundActionParam(read_compound(
-            reader,
-            version,
-            dxf_version,
-            false,
-        )),
+        "ASSOCACTIONPARAM" => {
+            AssociativeData::ActionParam(read_action_param(reader, version, dxf_version))
+        }
+        "ASSOCCOMPOUNDACTIONPARAM" => {
+            AssociativeData::CompoundActionParam(read_compound(reader, version, dxf_version, false))
+        }
         "ASSOCOSNAPPOINTREFACTIONPARAM" => {
             let compound = read_compound(reader, version, dxf_version, true);
             AssociativeData::OsnapPointRefActionParam(AssocOsnapPointRefActionParam {
@@ -1125,17 +1259,12 @@ pub fn read_associative_data(
                 parameter: reader.read_bit_double(),
             })
         }
-        "ASSOCPOINTREFACTIONPARAM" => AssociativeData::PointRefActionParam(read_compound(
-            reader,
-            version,
-            dxf_version,
-            true,
-        )),
-        "ASSOCOBJECTACTIONPARAM" => AssociativeData::ObjectActionParam(read_single_dependency(
-            reader,
-            version,
-            dxf_version,
-        )),
+        "ASSOCPOINTREFACTIONPARAM" => {
+            AssociativeData::PointRefActionParam(read_compound(reader, version, dxf_version, true))
+        }
+        "ASSOCOBJECTACTIONPARAM" => {
+            AssociativeData::ObjectActionParam(read_single_dependency(reader, version, dxf_version))
+        }
         "ASSOCPATHACTIONPARAM" => {
             let compound = read_compound(reader, version, dxf_version, false);
             AssociativeData::PathActionParam(AssocPathActionParam {
@@ -1143,14 +1272,12 @@ pub fn read_associative_data(
                 version: reader.read_bit_long(),
             })
         }
-        "ASSOCDIMDEPENDENCYBODY" => {
-            AssociativeData::DimDependencyBody(AssocDimDependencyBody {
-                dependency_body_version: reader.read_bit_short(),
-                base_version: reader.read_bit_short(),
-                name: reader.read_variable_text(),
-                class_version: reader.read_bit_short(),
-            })
-        }
+        "ASSOCDIMDEPENDENCYBODY" => AssociativeData::DimDependencyBody(AssocDimDependencyBody {
+            dependency_body_version: reader.read_bit_short(),
+            base_version: reader.read_bit_short(),
+            name: reader.read_variable_text(),
+            class_version: reader.read_bit_short(),
+        }),
         "ASSOCFACEACTIONPARAM" => {
             let single_dependency = read_single_dependency(reader, version, dxf_version);
             AssociativeData::FaceActionParam(AssocFaceActionParam {
@@ -1205,15 +1332,13 @@ pub fn read_associative_data(
         | "ASSOCARRAYRECTANGULARPARAMETERS" => {
             AssociativeData::ArrayParameters(read_array_parameters(reader))
         }
-        "ASSOCARRAYACTIONBODY" => AssociativeData::ArrayActionBody(read_array_action_body(
-            reader,
-            version,
-            dxf_version,
-        )),
+        "ASSOCARRAYACTIONBODY" => {
+            AssociativeData::ArrayActionBody(read_array_action_body(reader, version, dxf_version))
+        }
         "ASSOCARRAYMODIFYACTIONBODY" => {
             let body = read_array_action_body(reader, version, dxf_version);
             let status = reader.read_bit_short();
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut item_locations = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 item_locations.push([
@@ -1228,53 +1353,44 @@ pub fn read_associative_data(
                 item_locations,
             })
         }
-        "DIMASSOC" => {
-            AssociativeData::DimensionAssociation(read_dimension_association(reader))
+        "DIMASSOC" => AssociativeData::DimensionAssociation(read_dimension_association(reader)),
+        "PERSUBENTMGR" => {
+            AssociativeData::PersSubentManagerStatic(read_static_pers_subent_manager(reader))
         }
-        "PERSUBENTMGR" => AssociativeData::PersSubentManagerStatic(
-            read_static_pers_subent_manager(reader),
-        ),
-        "ASSOCVIEWREPACTIONBODY" => {
-            AssociativeData::ViewRepActionBody(AssocViewRepActionBody {
+        "ACDBCENTERMARKACTIONBODY" | "ACDBCENTERLINEACTIONBODY" => {
+            AssociativeData::SmartCenterActionBody(AssocSmartCenterActionBody {
                 action_body: read_action_body(reader),
-                class_version: reader.read_bit_short(),
-                view_rep: handle(reader),
-                view_type: reader.read_bit_long(),
-                rotation: reader.read_bit_double(),
+                parameter_body: read_parameter_body(reader, version, dxf_version),
+                version: reader.read_bit_long(),
             })
         }
+        "ASSOCVIEWREPACTIONBODY" => AssociativeData::ViewRepActionBody(AssocViewRepActionBody {
+            action_body: read_action_body(reader),
+            class_version: reader.read_bit_short(),
+            view_rep: handle(reader),
+            view_type: reader.read_bit_long(),
+            rotation: reader.read_bit_double(),
+        }),
         "ASSOCVIEWBORDERACTIONPARAM"
         | "ASSOCVIEWREPACTIONPARAM"
         | "ASSOCVIEWSYMBOLACTIONPARAM"
         | "ASSOCVIEWSTYLEACTIONPARAM" => {
             let kind = match name.as_str() {
-                "ASSOCVIEWREPACTIONPARAM" => {
-                    AssocViewObjectActionParamKind::ViewRep
-                }
-                "ASSOCVIEWSYMBOLACTIONPARAM" => {
-                    AssocViewObjectActionParamKind::ViewSymbol
-                }
-                "ASSOCVIEWSTYLEACTIONPARAM" => {
-                    AssocViewObjectActionParamKind::ViewStyle
-                }
+                "ASSOCVIEWREPACTIONPARAM" => AssocViewObjectActionParamKind::ViewRep,
+                "ASSOCVIEWSYMBOLACTIONPARAM" => AssocViewObjectActionParamKind::ViewSymbol,
+                "ASSOCVIEWSTYLEACTIONPARAM" => AssocViewObjectActionParamKind::ViewStyle,
                 _ => AssocViewObjectActionParamKind::ViewBorder,
             };
-            AssociativeData::ViewObjectActionParam(
-                AssocViewObjectActionParam {
-                    kind,
-                    single_dependency: read_single_dependency(
-                        reader,
-                        version,
-                        dxf_version,
-                    ),
-                    class_version: reader.read_bit_short(),
-                },
-            )
+            AssociativeData::ViewObjectActionParam(AssocViewObjectActionParam {
+                kind,
+                single_dependency: read_single_dependency(reader, version, dxf_version),
+                class_version: reader.read_bit_short(),
+            })
         }
         "ASSOCVIEWREPHATCHMANAGER" => {
             let compound = read_compound(reader, version, dxf_version, false);
             let class_version = reader.read_bit_short();
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut items = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 items.push(AssocViewRepHatchManagerItem {
@@ -1284,43 +1400,29 @@ pub fn read_associative_data(
                     parameter: handle(reader),
                 });
             }
-            AssociativeData::ViewRepHatchManager(
-                AssocViewRepHatchManager {
-                    compound,
-                    class_version,
-                    items,
-                },
-            )
+            AssociativeData::ViewRepHatchManager(AssocViewRepHatchManager {
+                compound,
+                class_version,
+                items,
+            })
         }
         "ASSOCVIEWREPHATCHACTIONPARAM" => {
-            AssociativeData::ViewRepHatchActionParam(
-                AssocViewRepHatchActionParam {
-                    single_dependency: read_single_dependency(
-                        reader,
-                        version,
-                        dxf_version,
-                    ),
-                    class_version: reader.read_bit_short(),
-                    normal: reader.read_3bit_double(),
-                    hatch_index: reader.read_bit_long(),
-                    flags: reader.read_bit_long(),
-                },
-            )
+            AssociativeData::ViewRepHatchActionParam(AssocViewRepHatchActionParam {
+                single_dependency: read_single_dependency(reader, version, dxf_version),
+                class_version: reader.read_bit_short(),
+                normal: reader.read_3bit_double(),
+                hatch_index: reader.read_bit_long(),
+                flags: reader.read_bit_long(),
+            })
         }
         "ASSOCVIEWLABELACTIONPARAM" => {
-            AssociativeData::ViewLabelActionParam(
-                AssocViewLabelActionParam {
-                    single_dependency: read_single_dependency(
-                        reader,
-                        version,
-                        dxf_version,
-                    ),
-                    class_version: reader.read_bit_short(),
-                    label_version: reader.read_bit_short(),
-                    offset: reader.read_2raw_double(),
-                    flag: reader.read_byte(),
-                },
-            )
+            AssociativeData::ViewLabelActionParam(AssocViewLabelActionParam {
+                single_dependency: read_single_dependency(reader, version, dxf_version),
+                class_version: reader.read_bit_short(),
+                label_version: reader.read_bit_short(),
+                offset: reader.read_2raw_double(),
+                flag: reader.read_byte(),
+            })
         }
         _ => return None,
     };

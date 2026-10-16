@@ -4,7 +4,7 @@
 //! This is the inverse of `header_writer.rs`, reading ~200 fields with
 //! extensive version-conditional logic.
 //!
-//! Based on ACadSharp's `DwgHeaderReader`.
+//! Based on the reference `DwgHeaderReader`.
 
 use crate::document::HeaderVariables;
 use crate::error::{DxfError, Result};
@@ -12,19 +12,40 @@ use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
 use crate::io::dwg::file_headers::section_definition::start_sentinels;
-use crate::types::{DxfVersion, Handle};
+use crate::types::{DxfVersion, Handle, LineWeight};
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Version-range helpers (same as header_writer)
 // ════════════════════════════════════════════════════════════════════════════
 
-#[inline] fn r13_14_only(v: DxfVersion) -> bool { v >= DxfVersion::AC1012 && v <= DxfVersion::AC1014 }
-#[inline] fn r13_15_only(v: DxfVersion) -> bool { v >= DxfVersion::AC1012 && v <= DxfVersion::AC1015 }
-#[inline] fn r2000_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1015 }
-#[inline] fn r2004_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1018 }
-#[inline] fn r2007_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1021 }
-#[inline] fn r2010_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1024 }
-#[inline] fn r2013_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1027 }
+#[inline]
+fn r13_14_only(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1012 && v <= DxfVersion::AC1014
+}
+#[inline]
+fn r13_15_only(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1012 && v <= DxfVersion::AC1015
+}
+#[inline]
+fn r2000_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1015
+}
+#[inline]
+fn r2004_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1018
+}
+#[inline]
+fn r2007_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1021
+}
+#[inline]
+fn r2010_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1024
+}
+#[inline]
+fn r2013_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1027
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Julian date helpers
@@ -63,24 +84,27 @@ impl SectionReader {
     fn with_encoding(
         data: Vec<u8>,
         version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: crate::io::dxf::code_page::LegacyEncoding,
     ) -> Result<Self> {
         if version >= DxfVersion::AC1021 {
             // R2007+: three-stream merge.
             // The section data starts with an RL (total size in bits).
             // Create a DwgMergedReader in ThreeStream mode and set up
             // text/handle sub-streams from the RL.
-            let mut merged =
-                DwgMergedReader::new_with_encoding(data, version, 0, encoding);
+            let mut merged = DwgMergedReader::new_with_encoding(data, version, 0, encoding);
             // Read the RL (total_size_bits) stored by save_position_for_size
             let total_size_bits = merged.main_mut().read_raw_long() as i64;
             merged.setup_text_and_handle(total_size_bits);
-            Ok(SectionReader { inner: SectionReaderInner::MergedReader(merged) })
+            Ok(SectionReader {
+                inner: SectionReaderInner::MergedReader(merged),
+            })
         } else {
             // Pre-R2007: single stream, everything inline
             let dwg = DwgVersion::from_dxf_version(version)?;
             let reader = DwgBitReader::with_encoding(data, dwg, version, encoding);
-            Ok(SectionReader { inner: SectionReaderInner::BitReader(reader) })
+            Ok(SectionReader {
+                inner: SectionReaderInner::BitReader(reader),
+            })
         }
     }
 
@@ -182,7 +206,11 @@ impl SectionReader {
 ///
 /// # Returns
 /// `HeaderVariables` populated with all header variables.
-pub fn read_header(data: &[u8], version: DxfVersion, maintenance_version: u8) -> Result<HeaderVariables> {
+pub fn read_header(
+    data: &[u8],
+    version: DxfVersion,
+    maintenance_version: u8,
+) -> Result<HeaderVariables> {
     read_header_with_encoding(
         data,
         version,
@@ -195,22 +223,30 @@ pub fn read_header_with_encoding(
     data: &[u8],
     version: DxfVersion,
     maintenance_version: u8,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
 ) -> Result<HeaderVariables> {
     // ── Verify start sentinel ──
     if data.len() < 36 {
         return Err(DxfError::Parse("Header section too short".to_string()));
     }
     if &data[..16] != &start_sentinels::HEADER {
-        return Err(DxfError::InvalidSentinel("Header section start sentinel mismatch".to_string()));
+        return Err(DxfError::InvalidSentinel(
+            "Header section start sentinel mismatch".to_string(),
+        ));
     }
 
     // ── Read section size ──
     let mut size_offset = 16;
     let section_size = i32::from_le_bytes([
-        data[size_offset], data[size_offset + 1],
-        data[size_offset + 2], data[size_offset + 3],
-    ]) as usize;
+        data[size_offset],
+        data[size_offset + 1],
+        data[size_offset + 2],
+        data[size_offset + 3],
+    ]);
+    if section_size < 0 {
+        return Err(DxfError::Parse("Header section has a negative size".to_string()));
+    }
+    let section_size = section_size as usize;
     size_offset += 4;
 
     // Extra 4 zero bytes when: (AC1024+ && maintenance > 3) || AC1032+
@@ -218,16 +254,26 @@ pub fn read_header_with_encoding(
         size_offset += 4;
     }
 
-    let section_data = &data[size_offset..size_offset + section_size];
+    let section_end = size_offset
+        .checked_add(section_size)
+        .ok_or_else(|| DxfError::Parse("Header section size overflows input bounds".to_string()))?;
+    let section_data = data.get(size_offset..section_end).ok_or_else(|| {
+        DxfError::Parse(format!(
+            "Header section extends past input: offset={}, size={}, data_len={}",
+            size_offset,
+            section_size,
+            data.len()
+        ))
+    })?;
 
-    let mut r = SectionReader::with_encoding(
-        section_data.to_vec(),
-        version,
-        encoding,
-    )?;
+    let mut r = SectionReader::with_encoding(section_data.to_vec(), version, encoding.into())?;
     let mut h = HeaderVariables::default();
 
     read_header_fields(&mut r, version, &mut h);
+    match &r.inner {
+        SectionReaderInner::BitReader(reader) => reader.check_error()?,
+        SectionReaderInner::MergedReader(reader) => reader.check_error()?,
+    }
 
     Ok(h)
 }
@@ -291,7 +337,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     }
 
     h.user_timer = r.read_bit();
-    let _ = r.read_bit(); // SKPOLY
+    h.sketch_type = if r.read_bit() { 1 } else { 0 }; // SKPOLY
     h.angle_direction = if r.read_bit() { 1 } else { 0 }; // ANGDIR
     h.spline_frame = r.read_bit(); // SPLFRAME
 
@@ -399,10 +445,14 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     h.menu_name = r.read_variable_text();
 
     // ── Date/time (Common) ──
+    // DWG stores universal time (TDUCREATE / TDUUPDATE); the file has no time
+    // zone, so the local values start out equal to them.
     let (cd, cms) = r.read_datetime();
-    h.create_date_julian = day_ms_to_julian(cd, cms);
+    h.universal_create_date_julian = day_ms_to_julian(cd, cms);
+    h.create_date_julian = h.universal_create_date_julian;
     let (ud, ums) = r.read_datetime();
-    h.update_date_julian = day_ms_to_julian(ud, ums);
+    h.universal_update_date_julian = day_ms_to_julian(ud, ums);
+    h.update_date_julian = h.universal_update_date_julian;
 
     if r2004_plus(v) {
         let _ = r.read_bit_long(); // unknown
@@ -548,10 +598,10 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
     // R2007+ dimension extras
     if r2007_plus(v) {
-        let _ = r.read_bit_double();   // DIMFXL
-        let _ = r.read_bit_double();   // DIMJOGANG
-        let _ = r.read_bit_short();    // DIMTFILL
-        let _ = r.read_cm_color();     // DIMTFILLCLR
+        let _ = r.read_bit_double(); // DIMFXL
+        let _ = r.read_bit_double(); // DIMJOGANG
+        let _ = r.read_bit_short(); // DIMTFILL
+        let _ = r.read_cm_color(); // DIMTFILLCLR
     }
 
     // R2000+ dimension flags
@@ -636,10 +686,10 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
     // R2010+: extra dimension fields
     if r2010_plus(v) {
-        let _ = r.read_bit();          // DIMTXTDIRECTION
-        let _ = r.read_bit_double();   // DIMALTMZF
+        let _ = r.read_bit(); // DIMTXTDIRECTION
+        let _ = r.read_bit_double(); // DIMALTMZF
         let _ = r.read_variable_text(); // DIMALTMZS
-        let _ = r.read_bit_double();   // DIMMZF
+        let _ = r.read_bit_double(); // DIMMZF
         let _ = r.read_variable_text(); // DIMMZS
     }
 
@@ -716,7 +766,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     // R2000+ flags bitfield
     if r2000_plus(v) {
         let flags = r.read_bit_long();
-        h.current_line_weight = (flags & 0x1F) as i16;
+        h.current_line_weight = LineWeight::from_dwg_index((flags & 0x1F) as u8).value();
         h.end_caps = ((flags >> 5) & 0x03) as i16;
         h.join_style = ((flags >> 7) & 0x03) as i16;
         h.lineweight_display = (flags & 0x200) == 0;
@@ -771,8 +821,8 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
         let _ = r.read_bit_double(); // 3DDWFPREC
         h.lens_length = r.read_bit_double();
         h.camera_height = r.read_bit_double();
-        let _ = r.read_byte(); // SOLIDHIST
-        let _ = r.read_byte(); // SHOWHIST
+        h.record_solid_history = r.read_byte() != 0;
+        h.show_solid_history = (r.read_byte() as i16).clamp(0, 2);
         let _ = r.read_bit_double(); // PSOLWIDTH
         let _ = r.read_bit_double(); // PSOLHEIGHT
         h.loft_angle1 = r.read_bit_double();
@@ -787,8 +837,8 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
         h.timezone = r.read_bit_long();
         let _ = r.read_byte(); // LIGHTGLYPHDISPLAY
         let _ = r.read_byte(); // TILEMODELIGHTSYNCH
-        let _ = r.read_byte(); // DWFFRAME
-        let _ = r.read_byte(); // DGNFRAME
+        h.dwf_frame = r.read_byte() as i16;
+        h.dgn_frame = r.read_byte() as i16;
 
         let _ = r.read_bit(); // unknown
 
@@ -862,36 +912,54 @@ mod tests {
         let mut original = HeaderVariables::default();
         original.fingerprint_guid = "{TEST-GUID-1234}".to_string();
         original.version_guid = "{VERSION-GUID-5678}".to_string();
+        original.current_layer_handle = Handle::new(98);
         let written = header_writer::write_header(DxfVersion::AC1021, &original, 0);
         let read = read_header(&written, DxfVersion::AC1021, 0).unwrap();
 
         // Verify numeric/boolean header variables
         assert_eq!(read.fill_mode, original.fill_mode);
         assert_eq!(read.ortho_mode, original.ortho_mode);
-        assert_eq!(read.linear_unit_format, original.linear_unit_format,
-            "LUNITS should survive roundtrip");
+        assert_eq!(
+            read.linear_unit_format, original.linear_unit_format,
+            "LUNITS should survive roundtrip"
+        );
         assert_eq!(read.angular_unit_format, original.angular_unit_format);
-        assert!((read.text_height - original.text_height).abs() < 1e-10,
-            "TEXTSIZE should survive roundtrip: got {} expected {}", read.text_height, original.text_height);
+        assert!(
+            (read.text_height - original.text_height).abs() < 1e-10,
+            "TEXTSIZE should survive roundtrip: got {} expected {}",
+            read.text_height,
+            original.text_height
+        );
         assert!((read.linetype_scale - original.linetype_scale).abs() < 1e-10);
-        assert_eq!(read.attribute_visibility, original.attribute_visibility,
-            "ATTMODE should survive roundtrip");
-        assert!((read.current_entity_linetype_scale - original.current_entity_linetype_scale).abs() < 1e-10,
-            "CELTSCALE should survive roundtrip");
+        assert_eq!(
+            read.attribute_visibility, original.attribute_visibility,
+            "ATTMODE should survive roundtrip"
+        );
+        assert!(
+            (read.current_entity_linetype_scale - original.current_entity_linetype_scale).abs()
+                < 1e-10,
+            "CELTSCALE should survive roundtrip"
+        );
         assert_eq!(read.insertion_units, original.insertion_units);
         assert_eq!(read.spline_segments, original.spline_segments);
         assert_eq!(read.sort_entities, original.sort_entities);
         // Verify TEXT values survive the three-stream roundtrip (these go in the
         // separate text sub-stream in R2007+, not inline in main).
-        assert_eq!(read.fingerprint_guid, original.fingerprint_guid,
-            "FINGERPRINTGUID should survive three-stream roundtrip");
-        assert_eq!(read.version_guid, original.version_guid,
-            "VERSIONGUID should survive three-stream roundtrip");
+        assert_eq!(
+            read.fingerprint_guid, original.fingerprint_guid,
+            "FINGERPRINTGUID should survive three-stream roundtrip"
+        );
+        assert_eq!(
+            read.version_guid, original.version_guid,
+            "VERSIONGUID should survive three-stream roundtrip"
+        );
+        assert_eq!(read.current_layer_handle, original.current_layer_handle);
     }
 
     #[test]
     fn test_header_roundtrip_r2010() {
-        let original = HeaderVariables::default();
+        let mut original = HeaderVariables::default();
+        original.current_layer_handle = Handle::new(98);
         let written = header_writer::write_header(DxfVersion::AC1024, &original, 0);
         let read = read_header(&written, DxfVersion::AC1024, 0).unwrap();
 
@@ -899,6 +967,7 @@ mod tests {
         assert_eq!(read.linear_unit_format, original.linear_unit_format);
         assert!((read.text_height - original.text_height).abs() < 1e-10);
         assert_eq!(read.attribute_visibility, original.attribute_visibility);
+        assert_eq!(read.current_layer_handle, original.current_layer_handle);
     }
 
     #[test]
@@ -907,5 +976,18 @@ mod tests {
         bad_data[..16].fill(0xFF);
         let result = read_header(&bad_data, DxfVersion::AC1015, 0);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_header_invalid_section_sizes_fail_without_panicking() {
+        let mut negative = vec![0u8; 64];
+        negative[..16].copy_from_slice(&start_sentinels::HEADER);
+        negative[16..20].copy_from_slice(&(-1i32).to_le_bytes());
+        assert!(read_header(&negative, DxfVersion::AC1015, 0).is_err());
+
+        let mut oversized = vec![0u8; 64];
+        oversized[..16].copy_from_slice(&start_sentinels::HEADER);
+        oversized[16..20].copy_from_slice(&(10_000i32).to_le_bytes());
+        assert!(read_header(&oversized, DxfVersion::AC1015, 0).is_err());
     }
 }

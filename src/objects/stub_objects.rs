@@ -1,7 +1,7 @@
 //! Stub object types for DXF objects that need basic round-trip support.
 //!
-//! These are minimal representations of DXF objects that ACadSharp supports
-//! but that don't require full rich data models for typical usage.
+//! These are minimal representations of supported DXF objects
+//! that don't require full rich data models for typical usage.
 
 use crate::types::{Color, Handle, Matrix4, Vector2, Vector3};
 
@@ -154,12 +154,9 @@ impl VisualStyle {
                 values[index] = property.clone();
             }
         }
-        values[0].value =
-            VisualStylePropertyValue::Long(self.face_lighting_model as i32);
-        values[1].value =
-            VisualStylePropertyValue::Long(self.face_lighting_quality as i32);
-        values[2].value =
-            VisualStylePropertyValue::Long(self.face_color_mode as i32);
+        values[0].value = VisualStylePropertyValue::Long(self.face_lighting_model as i32);
+        values[1].value = VisualStylePropertyValue::Long(self.face_lighting_quality as i32);
+        values[2].value = VisualStylePropertyValue::Long(self.face_color_mode as i32);
         values[3].value = VisualStylePropertyValue::Long(self.face_modifier);
         values[7].value = VisualStylePropertyValue::Long(self.edge_model);
         values[8].value = VisualStylePropertyValue::Long(self.edge_style);
@@ -207,7 +204,7 @@ impl VisualStyle {
             color(Color::Rgb { r: 0, g: 0, b: 0 }, 1),
             long(50),
             long(3),
-            color(Color::Index(5), 1),
+            color(Color::Rgb { r: 0, g: 0, b: 255 }, 1),
             bool_value(false),
             long(50),
             long(50),
@@ -240,9 +237,22 @@ impl VisualStyle {
             value: VisualStylePropertyValue::Double(value),
             enabled: 1,
         };
+        // Opacity (modifier bit 1) and specular (bit 2) are stored negative
+        // while the modifier leaves them off.
+        let signed = |property: &VisualStyleProperty, bit: i32| {
+            let mut property = property.clone();
+            if let VisualStylePropertyValue::Double(value) = &mut property.value {
+                *value = if self.face_modifier & bit != 0 {
+                    value.abs()
+                } else {
+                    -value.abs()
+                };
+            }
+            property
+        };
         vec![
-            core[4].clone(),
-            core[5].clone(),
+            signed(&core[4], 1),
+            signed(&core[5], 2),
             core[6].clone(),
             core[9].clone(),
             core[10].clone(),
@@ -333,10 +343,251 @@ impl VisualStyle {
         }
         core
     }
+
+    pub(crate) fn restore_post_2010_properties(
+        &mut self,
+        entries: &[crate::objects::XRecordEntry],
+    ) -> bool {
+        use crate::objects::XRecordValue;
+        if self.properties.len() != 24 {
+            return false;
+        }
+        let mut properties = self.core_properties();
+        properties.extend(self.extended_properties());
+        let mut color_index = None;
+        let mut found = false;
+        for pair in entries.windows(2) {
+            let (Some(key), value) = (pair[0].value.as_string(), &pair[1].value) else {
+                continue;
+            };
+            let flag = match value {
+                XRecordValue::Int16(v) => Some(*v),
+                _ => None,
+            };
+            if let Some(index) = key.strip_prefix("RTVSPropertyOp") {
+                if let (Ok(index), Some(flag)) = (index.parse::<usize>(), flag) {
+                    if let Some(property) = properties.get_mut(index) {
+                        property.enabled = flag;
+                        found = true;
+                    }
+                }
+                continue;
+            }
+            if let Some(index) = key.strip_prefix("RTVSPost2010PropOp") {
+                if let (Ok(index), Some(flag)) = (index.parse::<usize>(), flag) {
+                    if let Some(property) = properties.get_mut(index) {
+                        property.enabled = flag;
+                        found = true;
+                    }
+                }
+                continue;
+            }
+            let Some(rest) = key.strip_prefix("RTVSPost2010Prop") else {
+                continue;
+            };
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let Ok(index) = rest[..digits].parse::<usize>() else {
+                continue;
+            };
+            let Some(property) = properties.get_mut(index) else {
+                continue;
+            };
+            let number = match value {
+                XRecordValue::Byte(v) => Some(*v as f64),
+                XRecordValue::Int16(v) => Some(*v as f64),
+                XRecordValue::Int32(v) => Some(*v as f64),
+                XRecordValue::Double(v) => Some(*v),
+                XRecordValue::Bool(v) => Some(*v as u8 as f64),
+                _ => None,
+            };
+            let new_value = match (&rest[digits..], &property.value, number) {
+                ("ColorIndex", _, Some(n)) => {
+                    color_index = Some(n as i16);
+                    continue;
+                }
+                ("ColorRGB", _, Some(n)) => {
+                    let raw = n as i64 as i32;
+                    let index = color_index.take().unwrap_or(256);
+                    VisualStylePropertyValue::Color(match index {
+                        0 | 256 | 257 => Color::from_index(index),
+                        _ if (raw as u32) >> 24 == 0 => Color::from_true_color_value(raw),
+                        _ => Color::from_index(index),
+                    })
+                }
+                ("", VisualStylePropertyValue::Bool(_), Some(n)) => {
+                    VisualStylePropertyValue::Bool(n != 0.0)
+                }
+                ("", VisualStylePropertyValue::Long(_), Some(n)) => {
+                    VisualStylePropertyValue::Long(n as i32)
+                }
+                ("", VisualStylePropertyValue::Double(_), Some(n)) => {
+                    VisualStylePropertyValue::Double(n)
+                }
+                ("", VisualStylePropertyValue::Text(_), _) => match value.as_string() {
+                    Some(text) => VisualStylePropertyValue::Text(text.to_string()),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            property.value = new_value;
+            found = true;
+        }
+        if found {
+            self.properties = properties;
+        }
+        found
+    }
+}
+
+pub(crate) fn store_visual_style_roundtrip(document: &mut crate::document::CadDocument) {
+    use crate::objects::{ObjectType, XRecordEntry, XRecordValue};
+    use crate::types::DxfVersion;
+    if !(DxfVersion::AC1018..DxfVersion::AC1024).contains(&document.version) {
+        return;
+    }
+    let mut styles: Vec<_> = document
+        .objects
+        .iter()
+        .filter_map(|(handle, object)| match object {
+            ObjectType::VisualStyle(style) if style.properties.len() >= 58 => {
+                Some((*handle, style.properties.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    // Objects are created in handle order so the output is deterministic.
+    styles.sort_by_key(|style| style.0);
+    let key = |text: String| XRecordEntry {
+        code: 102,
+        value: XRecordValue::String(text),
+    };
+    for (handle, properties) in styles {
+        let mut group = Vec::new();
+        for (index, property) in properties.iter().enumerate().take(58).skip(28) {
+            let name = format!("RTVSPost2010Prop{index}");
+            match &property.value {
+                VisualStylePropertyValue::Color(color) => {
+                    let (aci, rgb) = match color {
+                        Color::Rgb { .. } => (
+                            color.approximate_index() as i32,
+                            color.to_true_color_value().unwrap_or_default(),
+                        ),
+                        _ => (color.approximate_index() as i32, 0xFF00_0000_u32 as i32),
+                    };
+                    group.push(key(format!("{name}ColorIndex")));
+                    group.push(XRecordEntry {
+                        code: 90,
+                        value: XRecordValue::Int32(aci),
+                    });
+                    group.push(key(format!("{name}ColorRGB")));
+                    group.push(XRecordEntry {
+                        code: 90,
+                        value: XRecordValue::Int32(rgb),
+                    });
+                }
+                value => {
+                    group.push(key(name));
+                    group.push(match value {
+                        VisualStylePropertyValue::Bool(v) => XRecordEntry {
+                            code: 280,
+                            value: XRecordValue::Byte(*v as u8),
+                        },
+                        VisualStylePropertyValue::Short(v) => XRecordEntry {
+                            code: 90,
+                            value: XRecordValue::Int32(*v as i32),
+                        },
+                        VisualStylePropertyValue::Long(v) => XRecordEntry {
+                            code: 90,
+                            value: XRecordValue::Int32(*v),
+                        },
+                        VisualStylePropertyValue::Double(v) => XRecordEntry {
+                            code: 140,
+                            value: XRecordValue::Double(*v),
+                        },
+                        VisualStylePropertyValue::Text(v) => XRecordEntry {
+                            code: 1,
+                            value: XRecordValue::String(v.clone()),
+                        },
+                        VisualStylePropertyValue::Color(_) => unreachable!(),
+                    });
+                }
+            }
+            group.push(key(format!("RTVSPost2010PropOp{index}")));
+            group.push(XRecordEntry {
+                code: 70,
+                value: XRecordValue::Int16(property.enabled),
+            });
+        }
+        // One flag per property id; the ids after the 58 properties are on.
+        for index in 0..63 {
+            group.push(key(format!("RTVSPropertyOp{index}")));
+            group.push(XRecordEntry {
+                code: 70,
+                value: XRecordValue::Int16(properties.get(index).map_or(1, |p| p.enabled)),
+            });
+        }
+        let record = document.ensure_xrecord(handle, "ACAD_XREC_ROUNDTRIP");
+        let Some(ObjectType::XRecord(record)) = document.objects.get_mut(&record) else {
+            continue;
+        };
+        // Replace an earlier copy of these groups, keep anything else.
+        let mut kept = Vec::with_capacity(record.entries.len());
+        let mut entries = std::mem::take(&mut record.entries).into_iter();
+        while let Some(entry) = entries.next() {
+            if entry.code == 102
+                && entry
+                    .value
+                    .as_string()
+                    .is_some_and(|text| text.starts_with("RTVS"))
+            {
+                entries.next();
+                continue;
+            }
+            kept.push(entry);
+        }
+        kept.extend(group);
+        record.entries = kept;
+    }
+}
+
+pub(crate) fn restore_visual_style_roundtrip(document: &mut crate::document::CadDocument) {
+    use crate::objects::ObjectType;
+    let records: Vec<_> = document
+        .objects
+        .iter()
+        .filter_map(|(handle, object)| {
+            let ObjectType::VisualStyle(style) = object else {
+                return None;
+            };
+            if style.properties.len() != 24 {
+                return None;
+            }
+            let Some(ObjectType::Dictionary(dictionary)) =
+                document.objects.get(&style.xdictionary_handle?)
+            else {
+                return None;
+            };
+            let (_, record) = dictionary
+                .entries
+                .iter()
+                .find(|(name, _)| name == "ACAD_XREC_ROUNDTRIP")?;
+            let Some(ObjectType::XRecord(record)) = document.objects.get(record) else {
+                return None;
+            };
+            Some((*handle, record.entries.clone()))
+        })
+        .collect();
+    for (handle, entries) in records {
+        if let Some(ObjectType::VisualStyle(style)) = document.objects.get_mut(&handle) {
+            style.restore_post_2010_properties(&entries);
+        }
+    }
 }
 
 impl Default for VisualStyle {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -621,7 +872,9 @@ impl Material {
 }
 
 impl Default for Material {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// GeoData — geographic location data for a drawing (AcDbGeoData).
@@ -777,7 +1030,9 @@ impl GeoData {
 }
 
 impl Default for GeoData {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// SpatialFilter — the clip boundary (XCLIP) attached to a block reference.
@@ -836,7 +1091,9 @@ impl SpatialFilter {
 }
 
 impl Default for SpatialFilter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// RasterVariables — global raster image settings
@@ -849,7 +1106,7 @@ pub struct RasterVariables {
     pub owner: Handle,
     /// Class version (code 90)
     pub class_version: i32,
-    /// Image frame display (code 70): 0 = no frame, 1 = display frame
+    /// Image frame mode (code 70): 0 = hidden, 1 = plotted, 2 = display only
     pub display_image_frame: i16,
     /// Image quality (code 71): 0 = draft, 1 = high
     pub image_quality: i16,
@@ -872,7 +1129,9 @@ impl RasterVariables {
 }
 
 impl Default for RasterVariables {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// BookColor (DBCOLOR) — named color definition
@@ -906,7 +1165,9 @@ impl BookColor {
 }
 
 impl Default for BookColor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// AcDbPlaceHolder — placeholder object (no data beyond handle)
@@ -930,7 +1191,9 @@ impl PlaceHolder {
 }
 
 impl Default for PlaceHolder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// DictionaryWithDefault — dictionary with a default entry handle
@@ -966,7 +1229,9 @@ impl DictionaryWithDefault {
 }
 
 impl Default for DictionaryWithDefault {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// WipeoutVariables — global wipeout display settings
@@ -977,7 +1242,8 @@ pub struct WipeoutVariables {
     pub handle: Handle,
     /// Owner handle
     pub owner: Handle,
-    /// Display image frame (code 70): 0 = no, 1 = yes
+    /// Wipeout frame mode (code 70): 0 = hidden, 1 = displayed and plotted,
+    /// 2 = displayed but not plotted.
     pub display_frame: i16,
 }
 
@@ -987,13 +1253,15 @@ impl WipeoutVariables {
         WipeoutVariables {
             handle: Handle::NULL,
             owner: Handle::NULL,
-            display_frame: 0,
+            display_frame: 1,
         }
     }
 }
 
 impl Default for WipeoutVariables {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // StubObject implementations for types that only need handle + owner parsing
@@ -1001,10 +1269,18 @@ impl Default for WipeoutVariables {
 macro_rules! impl_stub_object {
     ($ty:ident) => {
         impl StubObject for $ty {
-            fn new_stub() -> Self { Self::new() }
-            fn set_handle(&mut self, handle: Handle) { self.handle = handle; }
-            fn set_owner(&mut self, owner: Handle) { self.owner = owner; }
-            fn handle(&self) -> Handle { self.handle }
+            fn new_stub() -> Self {
+                Self::new()
+            }
+            fn set_handle(&mut self, handle: Handle) {
+                self.handle = handle;
+            }
+            fn set_owner(&mut self, owner: Handle) {
+                self.owner = owner;
+            }
+            fn handle(&self) -> Handle {
+                self.handle
+            }
         }
     };
 }

@@ -2,7 +2,7 @@
 
 use super::stream_reader::{DxfCodePair, DxfStreamContext, DxfStreamReader};
 use crate::error::{DxfError, Result};
-use encoding_rs::Encoding;
+use crate::io::dxf::code_page::LegacyEncoding;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 /// DXF ASCII text file reader
@@ -11,8 +11,8 @@ pub struct DxfTextReader<R: Read + Seek> {
     line_number: usize,
     stream_offset: u64,
     peeked_pair: Option<DxfCodePair>,
-    /// Non-UTF8 fallback encoding.  `None` means use Latin-1 (byte-to-char).
-    encoding: Option<&'static Encoding>,
+    /// Declared legacy encoding. `None` uses UTF-8 with Latin-1 fallback.
+    encoding: Option<LegacyEncoding>,
     /// Reusable buffer for line reading to avoid per-line allocation.
     line_buf: Vec<u8>,
     context: DxfStreamContext,
@@ -31,7 +31,7 @@ impl<R: Read + Seek> DxfTextReader<R> {
             context: DxfStreamContext::default(),
         })
     }
-    
+
     /// Read a single line from the stream into a new String, handling non-UTF8
     /// bytes gracefully.  Uses the configured encoding for fallback, or Latin-1
     /// if none set.
@@ -50,32 +50,37 @@ impl<R: Read + Seek> DxfTextReader<R> {
         self.stream_offset = self.stream_offset.saturating_add(bytes_read as u64);
 
         // Strip trailing \n and \r in-place
-        if buf.last() == Some(&b'\n') { buf.pop(); }
-        if buf.last() == Some(&b'\r') { buf.pop(); }
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+        }
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
 
-        // Try UTF-8 first (takes ownership to avoid copy), then use configured encoding or Latin-1 fallback
-        let line = match String::from_utf8(buf) {
-            Ok(s) => {
-                // Reclaim the allocation for next time
-                self.line_buf = Vec::with_capacity(256);
-                s
+        let line = if let Some(encoding) = self.encoding {
+            let text = encoding.decode(&buf).0.into_owned();
+            self.line_buf = buf;
+            text
+        } else {
+            match String::from_utf8(buf) {
+                Ok(s) => {
+                    // Reclaim the allocation for next time
+                    self.line_buf = Vec::with_capacity(256);
+                    s
+                }
+                Err(e) => {
+                    let bytes = e.into_bytes();
+                    let result = bytes.iter().map(|&b| b as char).collect();
+                    self.line_buf = bytes; // reclaim Vec allocation
+                    result
+                }
             }
-            Err(e) => {
-                let bytes = e.into_bytes();
-                let result = if let Some(enc) = self.encoding {
-                    let (decoded, _, malformed) = enc.decode(&bytes);
-                    if malformed {
-                        // If we had a specific encoding but it's malformed, we might want to know.
-                        // However, DXF sometimes has junk. For now, we still return what we can.
-                    }
-                    decoded.into_owned()
-                } else {
-                    // Fallback to Latin-1
-                    bytes.iter().map(|&b| b as char).collect()
-                };
-                self.line_buf = bytes; // reclaim Vec allocation
-                result
-            }
+        };
+        // Characters outside the code page arrive as MIF escapes.
+        let line = if crate::io::dxf::code_page::has_legacy_escape(&line) {
+            crate::io::dxf::code_page::decode_legacy_escapes(&line)
+        } else {
+            line
         };
 
         Ok(Some(line))
@@ -91,8 +96,12 @@ impl<R: Read + Seek> DxfTextReader<R> {
         }
         self.line_number += 1;
         self.stream_offset = self.stream_offset.saturating_add(bytes_read as u64);
-        if self.line_buf.last() == Some(&b'\n') { self.line_buf.pop(); }
-        if self.line_buf.last() == Some(&b'\r') { self.line_buf.pop(); }
+        if self.line_buf.last() == Some(&b'\n') {
+            self.line_buf.pop();
+        }
+        if self.line_buf.last() == Some(&b'\r') {
+            self.line_buf.pop();
+        }
         Ok(true)
     }
 
@@ -108,20 +117,33 @@ impl<R: Read + Seek> DxfTextReader<R> {
         }
 
         // Parse code directly from byte buffer
-        let code_str = std::str::from_utf8(&self.line_buf)
-            .map_err(|_| DxfError::Parse(format!("Invalid UTF-8 in code at line {}", self.line_number)))?;
-        let code = code_str.trim().parse::<i32>()
-            .map_err(|_| DxfError::Parse(format!("Invalid DXF code at line {}: '{}'", self.line_number, code_str)))?;
-        
+        let code_str = std::str::from_utf8(&self.line_buf).map_err(|_| {
+            DxfError::Parse(format!(
+                "Invalid UTF-8 in code at line {}",
+                self.line_number
+            ))
+        })?;
+        let code = code_str.trim().parse::<i32>().map_err(|_| {
+            DxfError::Parse(format!(
+                "Invalid DXF code at line {}: '{}'",
+                self.line_number, code_str
+            ))
+        })?;
+
         // Read value line
         let value_line = match self.read_line()? {
             Some(line) => line,
-            None => return Err(DxfError::Parse(format!("Unexpected EOF after code {} at line {}", code, self.line_number))),
+            None => {
+                return Err(DxfError::Parse(format!(
+                    "Unexpected EOF after code {} at line {}",
+                    code, self.line_number
+                )))
+            }
         };
-        
+
         // Process special character sequences in strings
         let value = self.process_string_value(&value_line);
-        
+
         let pair = DxfCodePair::new(code, value);
         self.observe_pair(&pair, pair_offset);
         Ok(Some(pair))
@@ -139,7 +161,7 @@ impl<R: Read + Seek> DxfTextReader<R> {
             self.context.record_handle = pair.as_handle();
         }
     }
-    
+
     /// Process special character sequences in DXF strings
     fn process_string_value(&self, value: &str) -> String {
         // Fast path: most DXF values contain no escape sequences
@@ -160,16 +182,16 @@ impl<R: Read + Seek> DxfStreamReader for DxfTextReader<R> {
         if let Some(pair) = self.peeked_pair.take() {
             return Ok(Some(pair));
         }
-        
+
         self.read_pair_internal()
     }
-    
+
     fn peek_code(&mut self) -> Result<Option<i32>> {
         // If we already have a peeked pair, return its code
         if let Some(ref pair) = self.peeked_pair {
             return Ok(Some(pair.code));
         }
-        
+
         // Read the next pair and store it
         if let Some(pair) = self.read_pair_internal()? {
             let code = pair.code;
@@ -183,7 +205,7 @@ impl<R: Read + Seek> DxfStreamReader for DxfTextReader<R> {
     fn push_back(&mut self, pair: DxfCodePair) {
         self.peeked_pair = Some(pair);
     }
-    
+
     fn reset(&mut self) -> Result<()> {
         self.reader.seek(SeekFrom::Start(0))?;
         self.line_number = 0;
@@ -193,7 +215,7 @@ impl<R: Read + Seek> DxfStreamReader for DxfTextReader<R> {
         Ok(())
     }
 
-    fn set_encoding(&mut self, encoding: &'static Encoding) {
+    fn set_encoding(&mut self, encoding: LegacyEncoding) {
         self.encoding = Some(encoding);
     }
 
@@ -206,68 +228,68 @@ impl<R: Read + Seek> DxfStreamReader for DxfTextReader<R> {
 mod tests {
     use super::*;
     use std::io::Cursor;
-    
+
     #[test]
     fn test_read_simple_pair() {
         let data = "0\nSECTION\n";
         let cursor = Cursor::new(data.as_bytes());
         let buf_reader = BufReader::new(cursor);
         let mut reader = DxfTextReader::new(buf_reader).unwrap();
-        
+
         let pair = reader.read_pair().unwrap().unwrap();
         assert_eq!(pair.code, 0);
         assert_eq!(pair.value_string, "SECTION");
     }
-    
+
     #[test]
     fn test_read_integer_pair() {
         let data = "70\n42\n";
         let cursor = Cursor::new(data.as_bytes());
         let buf_reader = BufReader::new(cursor);
         let mut reader = DxfTextReader::new(buf_reader).unwrap();
-        
+
         let pair = reader.read_pair().unwrap().unwrap();
         assert_eq!(pair.code, 70);
         assert_eq!(pair.as_int(), Some(42));
     }
-    
+
     #[test]
     fn test_read_double_pair() {
         let data = "10\n123.456\n";
         let cursor = Cursor::new(data.as_bytes());
         let buf_reader = BufReader::new(cursor);
         let mut reader = DxfTextReader::new(buf_reader).unwrap();
-        
+
         let pair = reader.read_pair().unwrap().unwrap();
         assert_eq!(pair.code, 10);
         assert_eq!(pair.as_double(), Some(123.456));
     }
-    
+
     #[test]
     fn test_peek_code() {
         let data = "0\nSECTION\n2\nHEADER\n";
         let cursor = Cursor::new(data.as_bytes());
         let buf_reader = BufReader::new(cursor);
         let mut reader = DxfTextReader::new(buf_reader).unwrap();
-        
+
         // Peek should return 0
         assert_eq!(reader.peek_code().unwrap(), Some(0));
-        
+
         // Read should return the same pair
         let pair = reader.read_pair().unwrap().unwrap();
         assert_eq!(pair.code, 0);
-        
+
         // Next peek should return 2
         assert_eq!(reader.peek_code().unwrap(), Some(2));
     }
-    
+
     #[test]
     fn test_special_characters() {
         let data = "1\nLine1^JLine2^MLine3\n";
         let cursor = Cursor::new(data.as_bytes());
         let buf_reader = BufReader::new(cursor);
         let mut reader = DxfTextReader::new(buf_reader).unwrap();
-        
+
         let pair = reader.read_pair().unwrap().unwrap();
         assert_eq!(pair.value_string, "Line1\nLine2\rLine3");
     }

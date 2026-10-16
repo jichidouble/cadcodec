@@ -1,4 +1,4 @@
-﻿//! ABI-level tests calling the exported extern "C" symbols directly.
+//! ABI-level tests calling the exported extern "C" symbols directly.
 
 use acadrust::ffi::*;
 use std::ffi::CString;
@@ -402,7 +402,7 @@ fn write_fixed_setter_dwg(dir_name: &str) -> SampleDwgFixture {
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(10.0, 0.0, 0.0),
     ));
-    doc.add_entity(EntityType::Dimension(dimension)).unwrap();
+    doc.add_entity(EntityType::Dimension(Box::new(dimension))).unwrap();
 
     let image = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 320.0, 240.0);
     doc.add_entity(EntityType::RasterImage(image)).unwrap();
@@ -490,14 +490,14 @@ fn write_entities_fixture() -> (CString, std::path::PathBuf) {
     doc.add_entity(EntityType::Ellipse(e)).unwrap();
     let mut m = MText::new();
     m.value = "mt".to_string();
-    doc.add_entity(EntityType::MText(m)).unwrap();
+    doc.add_entity(EntityType::MText(Box::new(m))).unwrap();
     let mut lw = LwPolyline::new();
     lw.add_vertex(LwVertex::from_coords(0.0, 0.0));
     lw.add_vertex(LwVertex::from_coords(10.0, 5.0));
     doc.add_entity(EntityType::LwPolyline(lw)).unwrap();
     let mut h = Hatch::new();
     h.pattern = HatchPattern::new("SOLID");
-    doc.add_entity(EntityType::Hatch(h)).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(h))).unwrap();
 
     DwgWriter::write_to_file(&path, &doc).unwrap();
     (CString::new(path.to_str().unwrap()).unwrap(), path)
@@ -746,7 +746,7 @@ fn write_batch1_dwg(dir_name: &str) -> (CString, std::path::PathBuf) {
     let mut m = MText::new();
     m.value = "mt".to_string();
     m.height = 2.0;
-    doc.add_entity(EntityType::MText(m)).unwrap();
+    doc.add_entity(EntityType::MText(Box::new(m))).unwrap();
 
     let s = Spline::from_control_points(
         3,
@@ -1536,7 +1536,7 @@ fn write_batch2_dwg(dir_name: &str) -> SampleDwgFixture {
     doc.add_entity(EntityType::Mesh(mesh)).unwrap();
 
     let vp = Viewport::new();
-    doc.add_entity(EntityType::Viewport(vp)).unwrap();
+    doc.add_entity(EntityType::Viewport(Box::new(vp))).unwrap();
 
     DwgWriter::write_to_file(&path, &doc).unwrap();
     SampleDwgFixture {
@@ -1612,7 +1612,7 @@ fn write_batch3_dwg(dir_name: &str) -> SampleDwgFixture {
     let mut h = Hatch::new();
     h.pattern = HatchPattern::new("SOLID");
     h.pattern_angle = 0.25;
-    doc.add_entity(EntityType::Hatch(h)).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(h))).unwrap();
 
     let mut tol = Tolerance::new();
     tol.insertion_point = Vector3::new(1.0, 2.0, 0.0);
@@ -1647,7 +1647,7 @@ fn write_batch3_dwg(dir_name: &str) -> SampleDwgFixture {
     hx.axis_base_point = Vector3::new(0.0, 0.0, 0.0);
     hx.radius = 3.0;
     hx.turns = 4.0;
-    doc.add_entity(EntityType::Helix(hx)).unwrap();
+    doc.add_entity(EntityType::Helix(Box::new(hx))).unwrap();
 
     DwgWriter::write_to_file(&path, &doc).unwrap();
     SampleDwgFixture {
@@ -2634,13 +2634,13 @@ fn write_batch4_dwg(dir_name: &str) -> SampleDwgFixture {
     helix.radius = 3.0;
     helix.turns = 2.0;
     helix.turn_height = 0.75;
-    doc.add_entity(EntityType::Helix(helix)).unwrap();
+    doc.add_entity(EntityType::Helix(Box::new(helix))).unwrap();
 
     let dim = Dimension::Linear(DimensionLinear::new(
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(10.0, 0.0, 0.0),
     ));
-    doc.add_entity(EntityType::Dimension(dim)).unwrap();
+    doc.add_entity(EntityType::Dimension(Box::new(dim))).unwrap();
 
     let img = RasterImage::new("img.png", Vector3::new(1.0, 1.0, 0.0), 320.0, 240.0);
     doc.add_entity(EntityType::RasterImage(img)).unwrap();
@@ -2651,7 +2651,7 @@ fn write_batch4_dwg(dir_name: &str) -> SampleDwgFixture {
 
     let mut light = Light::new();
     light.position = Vector3::new(5.0, 6.0, 7.0);
-    doc.add_entity(EntityType::Light(light)).unwrap();
+    doc.add_entity(EntityType::Light(Box::new(light))).unwrap();
 
     let mut wipeout = Wipeout::new();
     wipeout.insertion_point = Vector3::new(8.0, 9.0, 10.0);

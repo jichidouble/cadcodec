@@ -38,7 +38,8 @@ fn ac1032_layer_output_has_valid_header_handles_and_plotstyle() {
         .split("\r\n")
         .collect::<Vec<_>>();
     assert_eq!(maintenance[0], " 90");
-    assert_eq!(maintenance[1], "     0");
+    // The maintenance version a current writer gives R2018 files.
+    assert_eq!(maintenance[1], "   377");
 
     let table = layer_table(&output);
     let handles = layer_handles(table);
@@ -56,5 +57,7 @@ fn ac1032_layer_output_has_valid_header_handles_and_plotstyle() {
     assert!(handles.iter().all(|handle| *handle < handseed));
 
     let user_layers = table.split("  0\r\nLAYER\r\n").skip(2);
-    assert!(user_layers.clone().all(|record| record.contains("\r\n390\r\n")));
+    assert!(user_layers
+        .clone()
+        .all(|record| record.contains("\r\n390\r\n")));
 }

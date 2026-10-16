@@ -30,10 +30,7 @@ impl AssociativeObject {
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
@@ -93,6 +90,7 @@ pub enum AssociativeData {
     ViewRepHatchManager(AssocViewRepHatchManager),
     ViewRepHatchActionParam(AssocViewRepHatchActionParam),
     ViewLabelActionParam(AssocViewLabelActionParam),
+    SmartCenterActionBody(AssocSmartCenterActionBody),
 }
 
 impl AssociativeData {
@@ -108,9 +106,7 @@ impl AssociativeData {
                 dependency_references(&value.dependency, target)
                     || eval_references(&value.value, target)
             }
-            Self::GeomDependency(value) => {
-                dependency_references(&value.dependency, target)
-            }
+            Self::GeomDependency(value) => dependency_references(&value.dependency, target),
             Self::SurfaceActionBody(value) => {
                 parameter_body_references(&value.parameter_body, target)
                     || value.surface_body.dependency == target
@@ -125,10 +121,8 @@ impl AssociativeData {
                     || value.owned_actions.contains(&target)
             }
             Self::AnnotationActionBody(value) => {
-                parameter_body_references(
-                    &value.annotation.parameter_body,
-                    target,
-                ) || value.annotation.dependency == target
+                parameter_body_references(&value.annotation.parameter_body, target)
+                    || value.annotation.dependency == target
                     || value.entity == target
                     || value
                         .actions
@@ -139,10 +133,8 @@ impl AssociativeData {
                     || value.dependency == target
             }
             Self::EdgeActionParam(value) => {
-                single_dependency_references(
-                    &value.single_dependency,
-                    target,
-                ) || value.parameter == target
+                single_dependency_references(&value.single_dependency, target)
+                    || value.parameter == target
             }
             Self::ConstraintGroup(value) => {
                 action_references(&value.action, target)
@@ -163,10 +155,7 @@ impl AssociativeData {
                             value_dependency,
                             dimension_dependency,
                             ..
-                        } => {
-                            *value_dependency == target
-                                || *dimension_dependency == target
-                        }
+                        } => *value_dependency == target || *dimension_dependency == target,
                         AssocConstraintNodeData::ImplicitPoint {
                             geometry_dependency,
                             ..
@@ -190,23 +179,35 @@ impl AssociativeData {
                         | AssocConstraintNodeData::Arc {
                             geometry_dependency,
                             ..
+                        }
+                        | AssocConstraintNodeData::Ellipse {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::BoundedEllipse {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::RigidSet {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::Spline {
+                            geometry_dependency,
+                            ..
                         } => *geometry_dependency == target,
                         _ => false,
                     })
             }
             Self::Variable(value) => {
-                action_references(&value.action, target)
-                    || eval_references(&value.value, target)
+                action_references(&value.action, target) || eval_references(&value.value, target)
             }
             Self::CompoundActionParam(value)
             | Self::PointRefActionParam(value)
             | Self::PathActionParam(AssocPathActionParam {
-                compound: value,
-                ..
+                compound: value, ..
             }) => compound_references(value, target),
-            Self::OsnapPointRefActionParam(value) => {
-                compound_references(&value.compound, target)
-            }
+            Self::OsnapPointRefActionParam(value) => compound_references(&value.compound, target),
             Self::ObjectActionParam(value)
             | Self::FaceActionParam(AssocFaceActionParam {
                 single_dependency: value,
@@ -217,23 +218,17 @@ impl AssociativeData {
                 ..
             }) => single_dependency_references(value, target),
             Self::AsmBodyActionParam(value) => {
-                single_dependency_references(
-                    &value.single_dependency,
-                    target,
-                ) || value.history == target
+                single_dependency_references(&value.single_dependency, target)
+                    || value.history == target
             }
-            Self::ArrayParameters(value) => value.items.iter().any(|item| {
-                item.first_handle == Some(target)
-                    || item.second_handle == Some(target)
-            }),
+            Self::ArrayParameters(value) => array_items_reference(&value.items, target),
             Self::ArrayActionBody(value) => {
                 parameter_body_references(&value.parameter_body, target)
+                    || array_items_reference(&value.items, target)
             }
             Self::ArrayModifyActionBody(value) => {
-                parameter_body_references(
-                    &value.body.parameter_body,
-                    target,
-                )
+                parameter_body_references(&value.body.parameter_body, target)
+                    || array_items_reference(&value.body.items, target)
             }
             Self::DimensionAssociation(value) => {
                 value.dimension == target
@@ -244,37 +239,25 @@ impl AssociativeData {
             }
             Self::ViewRepActionBody(value) => value.view_rep == target,
             Self::ViewObjectActionParam(value) => {
-                single_dependency_references(
-                    &value.single_dependency,
-                    target,
-                )
+                single_dependency_references(&value.single_dependency, target)
             }
             Self::ViewRepHatchManager(value) => {
                 compound_references(&value.compound, target)
-                    || value
-                        .items
-                        .iter()
-                        .any(|item| item.parameter == target)
+                    || value.items.iter().any(|item| item.parameter == target)
             }
             Self::ViewRepHatchActionParam(value) => {
-                single_dependency_references(
-                    &value.single_dependency,
-                    target,
-                )
+                single_dependency_references(&value.single_dependency, target)
             }
             Self::ViewLabelActionParam(value) => {
-                single_dependency_references(
-                    &value.single_dependency,
-                    target,
-                )
+                single_dependency_references(&value.single_dependency, target)
+            }
+            Self::SmartCenterActionBody(value) => {
+                parameter_body_references(&value.parameter_body, target)
             }
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         match self {
             Self::Unknown
             | Self::ActionParam(_)
@@ -304,10 +287,7 @@ impl AssociativeData {
                 }
             }
             Self::AnnotationActionBody(value) => {
-                visit_parameter_body(
-                    &mut value.annotation.parameter_body,
-                    visit,
-                );
+                visit_parameter_body(&mut value.annotation.parameter_body, visit);
                 visit(&mut value.annotation.dependency);
                 visit(&mut value.entity);
                 for dependency in &mut value.actions {
@@ -318,10 +298,7 @@ impl AssociativeData {
                 visit(&mut value.dependency);
             }
             Self::EdgeActionParam(value) => {
-                visit_single_dependency(
-                    &mut value.single_dependency,
-                    visit,
-                );
+                visit_single_dependency(&mut value.single_dependency, visit);
                 visit(&mut value.parameter);
             }
             Self::ConstraintGroup(value) => {
@@ -373,6 +350,22 @@ impl AssociativeData {
                         | AssocConstraintNodeData::Arc {
                             geometry_dependency,
                             ..
+                        }
+                        | AssocConstraintNodeData::Ellipse {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::BoundedEllipse {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::RigidSet {
+                            geometry_dependency,
+                            ..
+                        }
+                        | AssocConstraintNodeData::Spline {
+                            geometry_dependency,
+                            ..
                         } => visit(geometry_dependency),
                         _ => {}
                     }
@@ -385,8 +378,7 @@ impl AssociativeData {
             Self::CompoundActionParam(value)
             | Self::PointRefActionParam(value)
             | Self::PathActionParam(AssocPathActionParam {
-                compound: value,
-                ..
+                compound: value, ..
             }) => visit_compound(value, visit),
             Self::OsnapPointRefActionParam(value) => {
                 visit_compound(&mut value.compound, visit);
@@ -405,23 +397,15 @@ impl AssociativeData {
                 ..
             }) => visit_single_dependency(value, visit),
             Self::ArrayParameters(value) => {
-                for item in &mut value.items {
-                    if let Some(handle) = item.first_handle.as_mut() {
-                        visit(handle);
-                    }
-                    if let Some(handle) = item.second_handle.as_mut() {
-                        visit(handle);
-                    }
-                }
+                visit_array_items(&mut value.items, visit);
             }
             Self::ArrayActionBody(value) => {
                 visit_parameter_body(&mut value.parameter_body, visit);
+                visit_array_items(&mut value.items, visit);
             }
             Self::ArrayModifyActionBody(value) => {
-                visit_parameter_body(
-                    &mut value.body.parameter_body,
-                    visit,
-                );
+                visit_parameter_body(&mut value.body.parameter_body, visit);
+                visit_array_items(&mut value.body.items, visit);
             }
             Self::DimensionAssociation(value) => {
                 visit(&mut value.dimension);
@@ -450,6 +434,9 @@ impl AssociativeData {
             Self::ViewLabelActionParam(value) => {
                 visit_single_dependency(&mut value.single_dependency, visit);
             }
+            Self::SmartCenterActionBody(value) => {
+                visit_parameter_body(&mut value.parameter_body, visit);
+            }
         }
         if let Self::AsmBodyActionParam(value) = self {
             visit(&mut value.history);
@@ -461,12 +448,26 @@ fn eval_references(value: &AssocEvalVariant, target: Handle) -> bool {
     matches!(value.value, AssocEvalValue::Handle(handle) if handle == target)
 }
 
+fn array_items_reference(items: &[AssocArrayItem], target: Handle) -> bool {
+    items.iter().any(|item| {
+        item.first_handle == Some(target) || item.second_handle == Some(target)
+    })
+}
+
+fn visit_array_items(items: &mut [AssocArrayItem], visit: &mut impl FnMut(&mut Handle)) {
+    for item in items {
+        for handle in item.first_handle.iter_mut().chain(item.second_handle.iter_mut()) {
+            visit(handle);
+        }
+    }
+}
+
 fn value_param_references(value: &AssocValueParam, target: Handle) -> bool {
     value.controlled_object_dependency == target
-        || value.variables.iter().any(|variable| {
-            variable.handle == target
-                || eval_references(&variable.value, target)
-        })
+        || value
+            .variables
+            .iter()
+            .any(|variable| variable.handle == target || eval_references(&variable.value, target))
 }
 
 fn dependency_references(value: &AssocDependency, target: Handle) -> bool {
@@ -490,10 +491,7 @@ fn action_references(value: &AssocAction, target: Handle) -> bool {
             .any(|parameter| value_param_references(parameter, target))
 }
 
-fn parameter_body_references(
-    value: &AssocParamBasedActionBody,
-    target: Handle,
-) -> bool {
+fn parameter_body_references(value: &AssocParamBasedActionBody, target: Handle) -> bool {
     value.dependencies.contains(&target)
         || value.dependency == target
         || value
@@ -502,17 +500,11 @@ fn parameter_body_references(
             .any(|parameter| value_param_references(parameter, target))
 }
 
-fn single_dependency_references(
-    value: &AssocSingleDependencyActionParam,
-    target: Handle,
-) -> bool {
+fn single_dependency_references(value: &AssocSingleDependencyActionParam, target: Handle) -> bool {
     value.dependency == target
 }
 
-fn compound_references(
-    value: &AssocCompoundActionParam,
-    target: Handle,
-) -> bool {
+fn compound_references(value: &AssocCompoundActionParam, target: Handle) -> bool {
     value.parameters.contains(&target)
         || value.child_parameter.as_ref().is_some_and(|child| {
             child.parameter == target
@@ -521,19 +513,13 @@ fn compound_references(
         })
 }
 
-fn visit_eval(
-    value: &mut AssocEvalVariant,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_eval(value: &mut AssocEvalVariant, visit: &mut impl FnMut(&mut Handle)) {
     if let AssocEvalValue::Handle(handle) = &mut value.value {
         visit(handle);
     }
 }
 
-fn visit_value_param(
-    value: &mut AssocValueParam,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_value_param(value: &mut AssocValueParam, visit: &mut impl FnMut(&mut Handle)) {
     for variable in &mut value.variables {
         visit_eval(&mut variable.value, visit);
         visit(&mut variable.handle);
@@ -541,20 +527,14 @@ fn visit_value_param(
     visit(&mut value.controlled_object_dependency);
 }
 
-fn visit_dependency(
-    value: &mut AssocDependency,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_dependency(value: &mut AssocDependency, visit: &mut impl FnMut(&mut Handle)) {
     visit(&mut value.dependent_on);
     visit(&mut value.read_dependency);
     visit(&mut value.node);
     visit(&mut value.dependency_body);
 }
 
-fn visit_action(
-    value: &mut AssocAction,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_action(value: &mut AssocAction, visit: &mut impl FnMut(&mut Handle)) {
     visit(&mut value.owning_network);
     visit(&mut value.action_body);
     for dependency in &mut value.dependencies {
@@ -588,10 +568,7 @@ fn visit_single_dependency(
     visit(&mut value.dependency);
 }
 
-fn visit_compound(
-    value: &mut AssocCompoundActionParam,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_compound(value: &mut AssocCompoundActionParam, visit: &mut impl FnMut(&mut Handle)) {
     for handle in &mut value.parameters {
         visit(handle);
     }
@@ -634,6 +611,30 @@ pub struct AssocValueDependency {
 pub struct AssocPersistentSubentId {
     pub class_name: String,
     pub dependent_on_compound_object: bool,
+    pub class_code: i32,
+    pub values: Vec<i32>,
+    pub leading_flag: bool,
+}
+
+const PERS_SUBENT_CLASSES: [(i32, &str); 2] = [
+    (1, "AcDbAssocSingleEdgePersSubentId"),
+    (5, "AcDbAssocAsmBasedEntityPersSubentId"),
+];
+
+impl AssocPersistentSubentId {
+    pub fn class_name_for_code(code: i32) -> Option<&'static str> {
+        PERS_SUBENT_CLASSES
+            .iter()
+            .find(|(value, _)| *value == code)
+            .map(|(_, name)| *name)
+    }
+
+    pub fn code_for_class_name(name: &str) -> Option<i32> {
+        PERS_SUBENT_CLASSES
+            .iter()
+            .find(|(_, value)| value.eq_ignore_ascii_case(name))
+            .map(|(code, _)| *code)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -836,10 +837,7 @@ pub struct AssocAnnotationActionBody {
 pub struct AssocPersSubentManager {
     pub class_version: i32,
     pub markers: [i32; 3],
-    pub steps: Vec<i32>,
-    pub subent_count: i32,
-    /// Fixed semantic tail currently documented as 34 integer slots.
-    pub subent_data: Vec<i32>,
+    pub values: Vec<i32>,
     pub final_flag: bool,
 }
 
@@ -850,6 +848,14 @@ pub struct AssocSingleDependencyActionParam {
     pub dependency_class_version: i32,
     pub dependency: Handle,
     pub class_version: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AssocSmartCenterActionBody {
+    pub action_body: AssocActionBody,
+    pub parameter_body: AssocParamBasedActionBody,
+    pub version: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -938,6 +944,16 @@ pub struct AssocEdgeActionParam {
     pub has_action: bool,
     pub action_type: i32,
     pub subcurve_kind: AssocSubcurveKind,
+    pub curve: Vec<AssocCurveValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AssocCurveValue {
+    Bool(bool),
+    Int(i32),
+    Real(f64),
+    Point(Vector3),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -960,6 +976,16 @@ pub enum AssocConstraintNodeData {
         owner_id: i32,
         is_implied: bool,
         is_active: bool,
+    },
+    Composite {
+        owner_id: i32,
+        is_implied: bool,
+        is_active: bool,
+        owned_constraint_ids: Vec<i32>,
+    },
+    HelpParameter {
+        value: f64,
+        reserved: bool,
     },
     Angle {
         owner_id: i32,
@@ -1005,6 +1031,13 @@ pub enum AssocConstraintNodeData {
         geometry_node_id: i32,
         point: Option<Vector3>,
     },
+    RigidSet {
+        geometry_dependency: Handle,
+        geometry_node_id: i32,
+        reserved: bool,
+        transform: [f64; 16],
+        geometry_ids: Vec<i32>,
+    },
     Line {
         geometry_dependency: Handle,
         geometry_node_id: i32,
@@ -1045,22 +1078,38 @@ pub enum AssocConstraintNodeData {
         end_point: Vector3,
     },
     Ellipse {
-        owner_id: i32,
-        is_implied: bool,
-        is_active: bool,
+        geometry_dependency: Handle,
+        geometry_node_id: i32,
         center: Vector3,
-        short_axis: Vector3,
+        major_axis: Vector3,
         axis_ratio: f64,
     },
     BoundedEllipse {
-        owner_id: i32,
-        is_implied: bool,
-        is_active: bool,
+        geometry_dependency: Handle,
+        geometry_node_id: i32,
         center: Vector3,
-        short_axis: Vector3,
+        major_axis: Vector3,
         axis_ratio: f64,
         start_point: Vector3,
         end_point: Vector3,
+    },
+    Spline {
+        geometry_dependency: Handle,
+        geometry_node_id: i32,
+        rational: bool,
+        periodic: bool,
+        degree: i32,
+        knot_tolerance: f64,
+        knot_physical_length: i32,
+        knot_grow_length: i32,
+        knots: Vec<f64>,
+        weight_physical_length: i32,
+        weight_grow_length: i32,
+        weights: Vec<f64>,
+        control_point_physical_length: i32,
+        control_point_grow_length: i32,
+        control_points: Vec<Vector3>,
+        implicit_point_ids: Vec<i32>,
     },
 }
 
@@ -1225,6 +1274,9 @@ pub struct AssocArrayActionBody {
     pub parameter_body: AssocParamBasedActionBody,
     pub version: i32,
     pub parameter_block: String,
+    pub item_list_version: i32,
+    pub item_class: String,
+    pub items: Vec<AssocArrayItem>,
     pub transform: [f64; 16],
 }
 
@@ -1235,6 +1287,9 @@ impl Default for AssocArrayActionBody {
             parameter_body: AssocParamBasedActionBody::default(),
             version: 0,
             parameter_block: String::new(),
+            item_list_version: 0,
+            item_class: String::new(),
+            items: Vec::new(),
             transform: [0.0; 16],
         }
     }
@@ -1287,8 +1342,7 @@ pub struct PersSubentManager {
     pub marker_two: i32,
     pub associative_step_count: i32,
     pub associative_subent_count: i32,
-    pub steps: Vec<i32>,
-    pub subents: Vec<i32>,
+    pub values: Vec<i32>,
 }
 
 pub fn associative_canonical_name(name: &str) -> String {
@@ -1365,6 +1419,8 @@ pub fn is_associative_object_name(name: &str) -> bool {
             | "ASSOCVIEWSYMBOLACTIONPARAM"
             | "ASSOCVIEWSTYLEACTIONPARAM"
             | "ASSOCVIEWLABELACTIONPARAM"
+            | "ACDBCENTERMARKACTIONBODY"
+            | "ACDBCENTERLINEACTIONBODY"
     )
 }
 
@@ -1425,6 +1481,8 @@ pub fn associative_cpp_class_name(name: &str) -> Option<&'static str> {
         "ASSOCVIEWSYMBOLACTIONPARAM" => "AcDbAssocViewSymbolActionParam",
         "ASSOCVIEWSTYLEACTIONPARAM" => "AcDbAssocViewStyleActionParam",
         "ASSOCVIEWLABELACTIONPARAM" => "AcDbAssocViewLabelActionParam",
+        "ACDBCENTERMARKACTIONBODY" => "AcDbCenterMarkActionBody",
+        "ACDBCENTERLINEACTIONBODY" => "AcDbCenterLineActionBody",
         _ => return None,
     })
 }

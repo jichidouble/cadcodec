@@ -4,15 +4,17 @@
 //! behavior tiers. The DWG format has version-specific differences at
 //! the bit-stream level, file header format, and entity encoding.
 
-use crate::types::DxfVersion;
 use crate::error::DxfError;
+use crate::types::DxfVersion;
 
 /// DWG format version, determining which stream writer features are used.
 ///
-/// This maps to the C# inheritance chain:
-/// `DwgStreamWriterAC12 → AC15 → AC18 → AC21 → AC24`
+/// R13 and later map to the C# inheritance chain:
+/// `DwgStreamWriterAC12 → AC15 → AC18 → AC21 → AC24`.
+/// R12 uses the separate pre-R13 file format.
 ///
 /// Each version adds or overrides specific encoding behaviors:
+/// - AC9: R12 pre-R13 format
 /// - AC12: Base bit-level I/O (R13/R14)
 /// - AC15: Optimized thickness/extrusion encoding (R2000)
 /// - AC18: True color RGB, transparency support (R2004)
@@ -21,6 +23,8 @@ use crate::error::DxfError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DwgVersion {
+    /// R12 (AC1009) pre-R13 DWG format
+    AC9,
     /// R13/R14 baseline
     AC12,
     /// R2000 — optimized thickness/extrusion
@@ -39,6 +43,7 @@ impl DwgVersion {
     /// Returns an error for `Unknown` version.
     pub fn from_dxf_version(version: DxfVersion) -> Result<Self, DxfError> {
         match version {
+            DxfVersion::AC1009 => Ok(DwgVersion::AC9),
             DxfVersion::AC1012 | DxfVersion::AC1014 => Ok(DwgVersion::AC12),
             DxfVersion::AC1015 => Ok(DwgVersion::AC15),
             DxfVersion::AC1018 => Ok(DwgVersion::AC18),
@@ -80,9 +85,14 @@ impl DwgVersion {
         *self == DwgVersion::AC12
     }
 
+    /// R12 only.
+    pub fn r12_only(&self) -> bool {
+        *self == DwgVersion::AC9
+    }
+
     /// R13 through R2000 (AC1012–AC1015)
     pub fn r13_15_only(&self) -> bool {
-        *self <= DwgVersion::AC15
+        *self >= DwgVersion::AC12 && *self <= DwgVersion::AC15
     }
 
     /// R2000 and later (AC1015+)
@@ -128,7 +138,7 @@ impl DwgVersion {
     /// Whether the Classes/Header sections contain an extra 4-byte RL field
     /// after the section-size RL.
     ///
-    /// The full condition (from ACadSharp) is:
+    /// The full condition is:
     ///   `(version >= AC1024 && maintenance_version > 3) || version > AC1027`
     ///
     /// In practice this means:
@@ -144,12 +154,14 @@ impl DwgVersion {
     /// Returns `None` for unrecognized version strings.
     pub fn from_version_string(s: &str) -> Option<Self> {
         match s {
+            "AC1009" | "AD1009" => Some(DwgVersion::AC9),
             "AC1012" | "AC1014" | "AD1012" | "AD1014" => Some(DwgVersion::AC12),
             "AC1015" | "AD1015" => Some(DwgVersion::AC15),
             "AC1018" | "AD1018" => Some(DwgVersion::AC18),
             "AC1021" | "AD1021" => Some(DwgVersion::AC21),
-            "AC1024" | "AC1027" | "AC1032"
-            | "AD1024" | "AD1027" | "AD1032" => Some(DwgVersion::AC24),
+            "AC1024" | "AC1027" | "AC1032" | "AD1024" | "AD1027" | "AD1032" => {
+                Some(DwgVersion::AC24)
+            }
             _ => None,
         }
     }
@@ -157,6 +169,7 @@ impl DwgVersion {
     /// Convert back to `DxfVersion` for the most representative value.
     pub fn to_dxf_version_string(&self) -> &'static str {
         match self {
+            DwgVersion::AC9 => "AC1009",
             DwgVersion::AC12 => "AC1012",
             DwgVersion::AC15 => "AC1015",
             DwgVersion::AC18 => "AC1018",
@@ -172,21 +185,55 @@ mod tests {
 
     #[test]
     fn test_from_dxf_version() {
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1012).unwrap(), DwgVersion::AC12);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1014).unwrap(), DwgVersion::AC12);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1015).unwrap(), DwgVersion::AC15);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1018).unwrap(), DwgVersion::AC18);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1021).unwrap(), DwgVersion::AC21);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1024).unwrap(), DwgVersion::AC24);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1027).unwrap(), DwgVersion::AC24);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1032).unwrap(), DwgVersion::AC24);
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1009).unwrap(),
+            DwgVersion::AC9
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1012).unwrap(),
+            DwgVersion::AC12
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1014).unwrap(),
+            DwgVersion::AC12
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1015).unwrap(),
+            DwgVersion::AC15
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1018).unwrap(),
+            DwgVersion::AC18
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1021).unwrap(),
+            DwgVersion::AC21
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1024).unwrap(),
+            DwgVersion::AC24
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1027).unwrap(),
+            DwgVersion::AC24
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1032).unwrap(),
+            DwgVersion::AC24
+        );
         assert!(DwgVersion::from_dxf_version(DxfVersion::Unknown).is_err());
     }
 
     #[test]
     fn test_version_conditionals() {
+        assert!(DwgVersion::AC9.r12_only());
+        assert!(!DwgVersion::AC12.r12_only());
+
         assert!(DwgVersion::AC12.r13_14_only());
         assert!(!DwgVersion::AC15.r13_14_only());
+
+        assert!(DwgVersion::AC12.r13_15_only());
+        assert!(!DwgVersion::AC9.r13_15_only());
 
         assert!(DwgVersion::AC15.r2000_plus());
         assert!(!DwgVersion::AC12.r2000_plus());
@@ -202,7 +249,29 @@ mod tests {
     }
 
     #[test]
+    fn test_r12_version_strings() {
+        assert_eq!(
+            DwgVersion::from_version_string("AC1009"),
+            Some(DwgVersion::AC9)
+        );
+        assert_eq!(
+            DwgVersion::from_version_string("AD1009"),
+            Some(DwgVersion::AC9)
+        );
+        assert_eq!(DwgVersion::AC9.to_dxf_version_string(), "AC1009");
+        assert_eq!(
+            DwgVersion::AC9.version_string(DxfVersion::AC1009),
+            "AC1009"
+        );
+        assert!(!DwgVersion::AC9.uses_page_format());
+        assert!(!DwgVersion::AC9.supports_true_color());
+        assert!(!DwgVersion::AC9.uses_unicode_text());
+        assert!(!DwgVersion::AC9.uses_compact_object_type());
+    }
+
+    #[test]
     fn test_ordering() {
+        assert!(DwgVersion::AC9 < DwgVersion::AC12);
         assert!(DwgVersion::AC12 < DwgVersion::AC15);
         assert!(DwgVersion::AC15 < DwgVersion::AC18);
         assert!(DwgVersion::AC18 < DwgVersion::AC21);

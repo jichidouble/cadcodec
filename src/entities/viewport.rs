@@ -7,6 +7,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewportStatusFlags {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub non_rectangular_clipping: bool,
     /// Viewport is on (visible)
     pub is_on: bool,
     /// Perspective mode active
@@ -55,6 +57,7 @@ impl ViewportStatusFlags {
     /// bits are viewport-locked(0x4000) and viewport-on/visible(0x8000).
     pub fn from_bits(bits: i32) -> Self {
         Self {
+            non_rectangular_clipping: (bits & 0x10000) != 0,
             perspective: (bits & (1 << 0)) != 0,
             front_clipping: (bits & (1 << 1)) != 0,
             back_clipping: (bits & (1 << 2)) != 0,
@@ -77,22 +80,57 @@ impl ViewportStatusFlags {
     /// Convert to the DWG/DXF viewport status bit-coded flags (group 90).
     pub fn to_bits(&self) -> i32 {
         let mut bits = 0;
-        if self.perspective { bits |= 1 << 0; }
-        if self.front_clipping { bits |= 1 << 1; }
-        if self.back_clipping { bits |= 1 << 2; }
-        if self.ucs_follow { bits |= 1 << 3; }
-        if self.front_clip_not_at_eye { bits |= 1 << 4; }
-        if self.ucs_icon_visible { bits |= 1 << 5; }
-        if self.ucs_icon_at_origin { bits |= 1 << 6; }
-        if self.fast_zoom { bits |= 1 << 7; }
-        if self.snap_on { bits |= 1 << 8; }
-        if self.grid_on { bits |= 1 << 9; }
-        if self.isometric_snap { bits |= 1 << 10; }
-        if self.hide_plot { bits |= 1 << 11; }
-        if self.iso_pair_top { bits |= 1 << 12; }
-        if self.iso_pair_right { bits |= 1 << 13; }
-        if self.locked { bits |= 1 << 14; }
-        if self.is_on { bits |= 1 << 15; }
+        if self.non_rectangular_clipping {
+            bits |= 0x10000;
+        }
+        if self.perspective {
+            bits |= 1 << 0;
+        }
+        if self.front_clipping {
+            bits |= 1 << 1;
+        }
+        if self.back_clipping {
+            bits |= 1 << 2;
+        }
+        if self.ucs_follow {
+            bits |= 1 << 3;
+        }
+        if self.front_clip_not_at_eye {
+            bits |= 1 << 4;
+        }
+        if self.ucs_icon_visible {
+            bits |= 1 << 5;
+        }
+        if self.ucs_icon_at_origin {
+            bits |= 1 << 6;
+        }
+        if self.fast_zoom {
+            bits |= 1 << 7;
+        }
+        if self.snap_on {
+            bits |= 1 << 8;
+        }
+        if self.grid_on {
+            bits |= 1 << 9;
+        }
+        if self.isometric_snap {
+            bits |= 1 << 10;
+        }
+        if self.hide_plot {
+            bits |= 1 << 11;
+        }
+        if self.iso_pair_top {
+            bits |= 1 << 12;
+        }
+        if self.iso_pair_right {
+            bits |= 1 << 13;
+        }
+        if self.locked {
+            bits |= 1 << 14;
+        }
+        if self.is_on {
+            bits |= 1 << 15;
+        }
         bits
     }
 }
@@ -166,10 +204,18 @@ impl GridFlags {
     /// Convert to bits
     pub fn to_bits(&self) -> i16 {
         let mut bits = 0;
-        if self.beyond_limits { bits |= 1; }
-        if self.adaptive { bits |= 2; }
-        if self.subdivision { bits |= 4; }
-        if self.follow_dynamic { bits |= 8; }
+        if self.beyond_limits {
+            bits |= 1;
+        }
+        if self.adaptive {
+            bits |= 2;
+        }
+        if self.subdivision {
+            bits |= 4;
+        }
+        if self.follow_dynamic {
+            bits |= 8;
+        }
         bits
     }
 }
@@ -211,6 +257,14 @@ pub struct Viewport {
     pub status: ViewportStatusFlags,
     /// Viewport ID (unique within the drawing)
     pub id: i16,
+    /// DXF group 68 status/stacking value when it was present in the source.
+    ///
+    /// `None` means the viewport was created in memory or came from a format
+    /// that does not expose the DXF value. In that case the DXF writer derives
+    /// the legacy value from `status.is_on`, `off_screen`, and `id`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_status: Option<i16>,
+    pub off_screen: bool,
     /// View center point (DCS - Display Coordinate System)
     pub view_center: Vector3,
     /// Snap base point
@@ -301,10 +355,12 @@ impl Viewport {
         Self {
             common: EntityCommon::default(),
             center: Vector3::ZERO,
-            width: 297.0,   // A4 width in mm
-            height: 210.0,  // A4 height in mm
+            width: 297.0,  // A4 width in mm
+            height: 210.0, // A4 height in mm
             status: ViewportStatusFlags::default_on(),
             id: 0,
+            dxf_status: None,
+            off_screen: false,
             view_center: Vector3::ZERO,
             snap_base: Vector3::ZERO,
             snap_spacing: Vector3::new(10.0, 10.0, 0.0),
@@ -632,7 +688,7 @@ impl Entity for Viewport {
     fn entity_type(&self) -> &'static str {
         "VIEWPORT"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_viewport(self, transform);
     }
@@ -652,11 +708,7 @@ mod tests {
 
     #[test]
     fn test_viewport_with_size() {
-        let vp = Viewport::with_size(
-            Vector3::new(100.0, 100.0, 0.0),
-            200.0,
-            150.0,
-        );
+        let vp = Viewport::with_size(Vector3::new(100.0, 100.0, 0.0), 200.0, 150.0);
         assert_eq!(vp.center, Vector3::new(100.0, 100.0, 0.0));
         assert_eq!(vp.width, 200.0);
         assert_eq!(vp.height, 150.0);
@@ -667,9 +719,9 @@ mod tests {
         let mut vp = Viewport::new();
         vp.height = 100.0;
         vp.view_height = 200.0;
-        
+
         assert!((vp.scale() - 0.5).abs() < 1e-10);
-        
+
         vp.set_scale(0.25);
         assert!((vp.view_height - 400.0).abs() < 1e-10);
     }
@@ -678,10 +730,10 @@ mod tests {
     fn test_viewport_lock() {
         let mut vp = Viewport::new();
         assert!(!vp.is_locked());
-        
+
         vp.lock();
         assert!(vp.is_locked());
-        
+
         vp.unlock();
         assert!(!vp.is_locked());
     }
@@ -691,11 +743,11 @@ mod tests {
         let mut vp = Viewport::new();
         let layer1 = Handle::new(100);
         let layer2 = Handle::new(200);
-        
+
         vp.freeze_layer(layer1);
         vp.freeze_layer(layer2);
         assert_eq!(vp.frozen_layers.len(), 2);
-        
+
         vp.thaw_layer(layer1);
         assert_eq!(vp.frozen_layers.len(), 1);
         assert!(vp.frozen_layers.contains(&layer2));
@@ -704,13 +756,13 @@ mod tests {
     #[test]
     fn test_viewport_standard_views() {
         let mut vp = Viewport::new();
-        
+
         vp.set_standard_view(StandardView::Front);
         assert_eq!(vp.view_direction, -Vector3::UNIT_Y);
-        
+
         vp.set_standard_view(StandardView::Top);
         assert_eq!(vp.view_direction, Vector3::UNIT_Z);
-        
+
         vp.set_standard_view(StandardView::NEIsometric);
         // Check it's roughly (1, 1, 1) normalized
         let expected = Vector3::new(1.0, 1.0, 1.0).normalize();
@@ -721,12 +773,8 @@ mod tests {
 
     #[test]
     fn test_viewport_paper_bounds() {
-        let vp = Viewport::with_size(
-            Vector3::new(100.0, 100.0, 0.0),
-            200.0,
-            100.0,
-        );
-        
+        let vp = Viewport::with_size(Vector3::new(100.0, 100.0, 0.0), 200.0, 100.0);
+
         let bounds = vp.paper_bounds();
         assert_eq!(bounds.min.x, 0.0);
         assert_eq!(bounds.min.y, 50.0);
@@ -760,12 +808,8 @@ mod tests {
 
     #[test]
     fn test_viewport_translate() {
-        let mut vp = Viewport::with_size(
-            Vector3::new(0.0, 0.0, 0.0),
-            100.0,
-            100.0,
-        );
-        
+        let mut vp = Viewport::with_size(Vector3::new(0.0, 0.0, 0.0), 100.0, 100.0);
+
         vp.translate(Vector3::new(50.0, 50.0, 0.0));
         assert_eq!(vp.center, Vector3::new(50.0, 50.0, 0.0));
     }
@@ -777,7 +821,7 @@ mod tests {
             .with_view_target(Vector3::new(50.0, 50.0, 0.0))
             .with_scale(0.5)
             .with_locked();
-        
+
         assert_eq!(vp.center, Vector3::new(100.0, 100.0, 0.0));
         assert_eq!(vp.view_target, Vector3::new(50.0, 50.0, 0.0));
         assert!(vp.is_locked());

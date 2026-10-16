@@ -53,8 +53,12 @@ pub struct TextStyle {
     pub big_font_file: String,
     /// True Type font name
     pub true_type_font: String,
+    #[cfg_attr(feature = "serde", serde(default = "default_true_type_font_flags"))]
+    pub true_type_font_flags: i32,
     /// Whether this style is xref-dependent
     pub xref_dependent: bool,
+    /// Block record of the xref this style came from (NULL when local).
+    pub xref_block_record_handle: Handle,
     /// Whether this STYLE record names an SHX shape file.
     pub is_shape_file: bool,
     /// Whether glyphs are drawn vertically.
@@ -63,6 +67,10 @@ pub struct TextStyle {
     /// Persisted as XDATA under the `AcadAnnotative` application:
     /// `AnnotativeData { 1 <flag> }`.
     pub annotative: bool,
+}
+
+fn default_true_type_font_flags() -> i32 {
+    34
 }
 
 impl TextStyle {
@@ -79,7 +87,9 @@ impl TextStyle {
             font_file: "txt".to_string(),
             big_font_file: String::new(),
             true_type_font: String::new(),
+            true_type_font_flags: default_true_type_font_flags(),
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
             is_shape_file: false,
             is_vertical: false,
             annotative: false,
@@ -99,7 +109,9 @@ impl TextStyle {
             font_file: "txt".to_string(),
             big_font_file: String::new(),
             true_type_font: String::new(),
+            true_type_font_flags: default_true_type_font_flags(),
             xref_dependent: false,
+            xref_block_record_handle: Handle::NULL,
             is_shape_file: false,
             is_vertical: false,
             annotative: false,
@@ -195,12 +207,11 @@ mod tests {
         let mut style = TextStyle::new("Test");
         assert!(!style.is_backward());
         assert!(!style.is_upside_down());
-        
+
         style.set_backward(true);
         assert!(style.is_backward());
-        
+
         style.set_upside_down(true);
         assert!(style.is_upside_down());
     }
 }
-

@@ -10,17 +10,17 @@
 //! The reader dispatches by type code to specific entity/table/object
 //! readers (implemented in sibling modules in later phases).
 //!
-//! Based on ACadSharp's `DwgObjectReader.cs`.
+//! Based on the reference `DwgObjectReader.cs`.
 
 pub mod associative;
-pub mod common;
 pub mod class_object;
+pub mod common;
 pub mod data_objects;
 pub mod dgn_linestyle;
-pub mod entities;
-pub mod objects;
 pub mod dynamic_block;
+pub mod entities;
 pub mod field;
+pub mod objects;
 pub mod tables;
 
 use crate::error::{DxfError, Result};
@@ -30,16 +30,13 @@ use crate::types::{Color, DxfVersion, Transparency};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Maximum number of items in any array read from the stream.
-/// Prevents infinite loops when reading corrupt data.
-const MAX_ARRAY_COUNT: i32 = 100_000;
 const MAX_MESH_FACES: usize = 250_000;
 const MAX_MESH_FACE_INDICES: usize = 1_000_000;
 
-/// Cap a loop count read from the stream to a safe maximum.
+/// Reject counts that cannot be represented by the remaining record bits.
 #[inline]
-fn safe_count(raw: i32) -> i32 {
-    raw.max(0).min(MAX_ARRAY_COUNT)
+fn safe_count(raw: i32, reader: &DwgMergedReader) -> i32 {
+    reader.checked_count(i64::from(raw)) as i32
 }
 
 /// Result of reading a single object record's common data.
@@ -132,6 +129,7 @@ pub struct NonEntityCommonData {
     pub reactors: Vec<u64>,
     /// XDictionary handle (if present)
     pub xdictionary_handle: Option<u64>,
+    pub has_ds_data: bool,
 }
 
 /// DWG Object Reader — iterates the object section by handle map.
@@ -145,7 +143,7 @@ pub struct DwgObjectReader {
     /// Handle → byte-offset map (from handle section)
     handle_map: HashMap<u64, i64>,
     /// Document code page used by pre-R2007 object strings.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl DwgObjectReader {
@@ -160,19 +158,14 @@ impl DwgObjectReader {
         dxf_version: DxfVersion,
         handle_map: HashMap<u64, i64>,
     ) -> Result<Self> {
-        Self::with_encoding(
-            data,
-            dxf_version,
-            handle_map,
-            encoding_rs::WINDOWS_1252,
-        )
+        Self::with_encoding(data, dxf_version, handle_map, encoding_rs::WINDOWS_1252)
     }
 
     pub fn with_encoding(
         data: Vec<u8>,
         dxf_version: DxfVersion,
         handle_map: HashMap<u64, i64>,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Result<Self> {
         let version = DwgVersion::from_dxf_version(dxf_version)?;
         Ok(DwgObjectReader {
@@ -180,7 +173,7 @@ impl DwgObjectReader {
             version,
             dxf_version,
             handle_map,
-            encoding,
+            encoding: encoding.into(),
         })
     }
 
@@ -195,13 +188,13 @@ impl DwgObjectReader {
                 self.data.len()
             )));
         }
-        let (size, ms_len) = read_modular_short(&self.data[offset..]);
+        let (size, ms_len) = read_modular_short(&self.data[offset..])?;
         let mut pos = offset + ms_len;
         if self.version.r2010_plus() {
-            let (_, mc_len) = read_modular_char(&self.data[pos..]);
+            let (_, mc_len) = read_modular_char(&self.data[pos..])?;
             pos += mc_len;
         }
-        if size == 0 || pos >= self.data.len() {
+        if size == 0 || pos >= self.data.len() || size > self.data.len() - pos {
             return Err(DxfError::Parse(format!(
                 "Object record at {} has no type prefix",
                 offset
@@ -233,12 +226,12 @@ impl DwgObjectReader {
         let mut pos = offset;
 
         // 1. Read ModularShort (MS) — object size in bytes
-        let (size, ms_len) = read_modular_short(&self.data[pos..]);
+        let (size, ms_len) = read_modular_short(&self.data[pos..])?;
         pos += ms_len;
 
         // 2. R2010+: Read ModularChar (MC) — handle stream bit count
         let handle_bits = if self.version.r2010_plus() {
-            let (hb, mc_len) = read_modular_char(&self.data[pos..]);
+            let (hb, mc_len) = read_modular_char(&self.data[pos..])?;
             pos += mc_len;
             hb as i64
         } else {
@@ -246,7 +239,7 @@ impl DwgObjectReader {
         };
 
         // 3. Extract merged data
-        if pos + size > self.data.len() {
+        if size > self.data.len().saturating_sub(pos) {
             return Err(DxfError::Parse(format!(
                 "Object record extends past data: offset={}, size={}, data_len={}",
                 offset,
@@ -287,7 +280,7 @@ impl DwgObjectReader {
                 let total_size_bits = temp.read_raw_long() as i64;
                 data_start_bits = temp.position_in_bits();
 
-                // Per-object RL convention (matches ACadSharp):
+                // Per-object RL convention (matches the reference implementation):
                 // RL = absolute bit position of handle stream start (from bit 0).
                 // Flag bit is at RL - 1.  Handles start at bit RL (NOT byte-aligned).
                 flag_position = total_size_bits - 1;
@@ -303,6 +296,9 @@ impl DwgObjectReader {
             }
 
             // Main reader: starts at data_start_bits (after type_code [+ RL])
+            if handle_start <= data_start_bits || handle_start > size as i64 * 8 {
+                return Err(DxfError::Parse("Invalid DWG object handle-stream boundary".into()));
+            }
             let mut main_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
                 Arc::clone(&merged_data),
                 dwg,
@@ -318,8 +314,11 @@ impl DwgObjectReader {
                 self.dxf_version,
                 self.encoding,
             );
-            let main_data_end =
-                text_reader.set_position_by_flag(flag_position);
+            let main_data_end = text_reader.set_position_by_flag(flag_position);
+            text_reader.check_error()?;
+            if main_data_end < data_start_bits {
+                return Err(DxfError::Parse("DWG text stream overlaps object prefix".into()));
+            }
 
             // Handle reader: starts at bit position handle_start (NOT byte-aligned).
             let mut handle_reader =
@@ -374,20 +373,25 @@ impl DwgObjectReader {
         };
 
         // Create main reader (reads from bit 0)
-        let main_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
-            Arc::clone(&merged_data),
-            dwg,
-            self.dxf_version,
-            self.encoding,
-        );
+        if handle_start_bits < 0 || handle_start_bits > size as i64 * 8 {
+            return Err(DxfError::Parse("Invalid DWG object handle-stream boundary".into()));
+        }
+        let main_reader =
+            crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
+                Arc::clone(&merged_data),
+                dwg,
+                self.dxf_version,
+                self.encoding,
+            );
 
         // Create handle reader positioned at handle_start_bits
-        let mut handle_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
-            merged_data,
-            dwg,
-            self.dxf_version,
-            self.encoding,
-        );
+        let mut handle_reader =
+            crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
+                merged_data,
+                dwg,
+                self.dxf_version,
+                self.encoding,
+            );
         handle_reader.set_position_in_bits(handle_start_bits);
 
         let mut reader = DwgMergedReader::from_readers(
@@ -457,11 +461,8 @@ impl DwgObjectReader {
             } else {
                 reader.read_raw_long() as i64
             };
-            let mut gdata = Vec::with_capacity(graphic_size.max(0) as usize);
-            for _ in 0..graphic_size.max(0) {
-                gdata.push(reader.read_byte());
-            }
-            Some(gdata)
+            let size = reader.checked_main_count(graphic_size, 8) as usize;
+            Some(reader.read_bytes(size))
         } else {
             None
         };
@@ -483,7 +484,7 @@ impl DwgObjectReader {
         };
 
         // Reactor count + handles
-        let reactor_count = safe_count(reader.read_bit_long());
+        let reactor_count = safe_count(reader.read_bit_long(), reader);
         let mut reactors = Vec::new();
         for _ in 0..reactor_count {
             reactors.push(reader.read_handle());
@@ -508,89 +509,11 @@ impl DwgObjectReader {
             }
         };
 
-        // R2013+: `has_ds_data` bit — set when the entity's geometry lives in
-        // the AcDs data store (3DSOLID/REGION/BODY/SURFACE SAB blobs). Captured
-        // so the AcDs blob→entity attach can honour object-stream order.
-        //
-        // Read it for everything the spec covers — as ACadSharp
-        // (`readReactorsAndDictionaryHandle`) and LibreDWG
-        // (`common_entity_data.spec`: `SINCE (R_2013) FIELD_B (has_ds_data)`)
-        // both do — except MULTILEADER, which some writers omit it for.
-        //
-        // This was previously gated on `!has_graphic`, on the theory that
-        // entities carrying a preview omit the bit. That is not the
-        // distinction: in one and the same drawing, WIPEOUT and IMAGE carry a
-        // preview AND write the bit, while MULTILEADER carries a preview and
-        // omits it. So the old gate desynced every preview-bearing IMAGE and
-        // WIPEOUT (fade/insertion/handles decoded to garbage, images silently
-        // vanished) just to keep MULTILEADER aligned.
-        //
-        // The skip cannot be deferred and validated later: the missing bit
-        // shifts the variable-length fields that follow (bit-shorts, ENC
-        // colour), so the divergence grows past one bit and no downstream
-        // anchor can recover it. It must be decided here, and `type_code` is
-        // already normalised to the stable OBJ_* constants for class-based
-        // entities, so keying on it is portable across files.
+        // R2013+: modeler geometry may live in the AcDs data store. The flag is
+        // part of every entity header, including entities with preview data.
         let mut has_ds_data = false;
         if self.version.r2013_plus(self.dxf_version) {
-            if type_code == common::OBJ_MULTILEADER {
-                // Some writers emit the has_ds bit for MULTILEADER, some omit it,
-                // within the same DWG version — so a fixed rule mis-decodes one
-                // family or the other. Decide by peeking the object's
-                // class_version (the first main-stream field after the common
-                // data): with the wrong choice the 1-bit shift cascades through
-                // the variable-length ENC colour and the version reads garbage.
-                // The peek walks the MAIN stream only — the handle reads
-                // interleaved in the common data live in the handle stream and
-                // don't move the main cursor, so replicating just the main reads
-                // lands exactly on the version either way.
-                let r2007 = self.version.r2007_plus();
-                let r2010 = self.version.r2010_plus();
-                let start = reader.position_in_bits();
-                let peek = |reader: &mut DwgMergedReader, read_ds: bool| -> i16 {
-                    if read_ds {
-                        let _ = reader.read_bit();
-                    }
-                    let _ = reader.read_en_color(); // colour (ENC, variable)
-                    let _ = reader.read_bit_double(); // linetype scale
-                    let _ = reader.main_mut().read_2bits(); // linetype flags
-                    if r2007 {
-                        let _ = reader.main_mut().read_2bits(); // material flags
-                        let _ = reader.read_byte(); // shadow flags
-                    }
-                    let _ = reader.main_mut().read_2bits(); // plotstyle flags
-                    if r2010 {
-                        // Three visual-style presence bits (their handles, when
-                        // set, are in the handle stream — skipped here).
-                        let _ = reader.read_bit();
-                        let _ = reader.read_bit();
-                        let _ = reader.read_bit();
-                    }
-                    let _ = reader.read_bit_short(); // invisibility
-                    let _ = reader.read_byte(); // lineweight
-                    reader.read_bit_short() // MULTILEADER class_version
-                };
-                let plausible = |v: i16| (0..=10).contains(&v);
-                let v_with = peek(reader, true);
-                reader.set_position_in_bits(start);
-                let v_without = peek(reader, false);
-                reader.set_position_in_bits(start);
-                // Decide by which offset decodes the class_version sanely.
-                // AutoCAD only ever writes 2, so an exact 2 outranks the
-                // broader 0..=10 plausibility band — a 1-bit misalignment can
-                // still decode to a "plausible" small integer (e.g. the BS
-                // '10' code = 0), which the old rule wrongly trusted.
-                let consume = if (v_with == 2) != (v_without == 2) {
-                    v_with == 2
-                } else {
-                    plausible(v_with) && !plausible(v_without)
-                };
-                if consume {
-                    has_ds_data = reader.read_bit();
-                }
-            } else {
-                has_ds_data = reader.read_bit();
-            }
+            has_ds_data = reader.read_bit();
         }
 
         // R13-R14: layer + linetype
@@ -784,7 +707,7 @@ impl DwgObjectReader {
         let owner_handle = reader.read_handle();
 
         // Reactor count + handles
-        let reactor_count = safe_count(reader.read_bit_long());
+        let reactor_count = safe_count(reader.read_bit_long(), reader);
         let mut reactors = Vec::new();
         for _ in 0..reactor_count {
             reactors.push(reader.read_handle());
@@ -810,15 +733,14 @@ impl DwgObjectReader {
         };
 
         // R2013+: binary data flag
-        if self.version.r2013_plus(self.dxf_version) {
-            let _has_binary_data = reader.read_bit();
-        }
+        let has_ds_data = self.version.r2013_plus(self.dxf_version) && reader.read_bit();
 
         NonEntityCommonData {
             common,
             owner_handle,
             reactors,
             xdictionary_handle,
+            has_ds_data,
         }
     }
 
@@ -830,6 +752,9 @@ impl DwgObjectReader {
         let mut result: Vec<(u64, Vec<u8>)> = Vec::new();
         loop {
             let size = reader.read_bit_short();
+            if size < 0 {
+                reader.invalidate("Negative DWG extended-data length");
+            }
             if size <= 0 {
                 break;
             }
@@ -839,10 +764,7 @@ impl DwgObjectReader {
             // Raw xdata bytes (from main stream, one byte at a time).
             // These bytes are NOT bit-packed; read them through the bit
             // reader to respect any outstanding bit shift.
-            let mut data = Vec::with_capacity(size_u);
-            for _ in 0..size_u {
-                data.push(reader.read_byte());
-            }
+            let data = reader.read_bytes(size_u);
             result.push((app_handle, data));
         }
         result
@@ -888,13 +810,7 @@ impl<'a> PrefixBitReader<'a> {
 
     fn read_bit(&mut self) -> u8 {
         let shift = 7 - self.bit % 8;
-        let value = (self
-            .data
-            .get(self.bit / 8)
-            .copied()
-            .unwrap_or(0)
-            >> shift)
-            & 1;
+        let value = (self.data.get(self.bit / 8).copied().unwrap_or(0) >> shift) & 1;
         self.bit += 1;
         value
     }
@@ -938,52 +854,37 @@ impl<'a> PrefixBitReader<'a> {
 
 /// Read a ModularShort (MS) from a byte slice.
 /// Returns (value, bytes_consumed).
-fn read_modular_short(data: &[u8]) -> (usize, usize) {
-    let mut value: usize = 0;
-    let mut shift = 0;
-    let mut i = 0;
-
-    loop {
-        if i + 1 >= data.len() {
-            break;
-        }
-        let word = u16::from_le_bytes([data[i], data[i + 1]]);
-        i += 2;
-
-        value |= ((word & 0x7FFF) as usize) << shift;
-        shift += 15;
-
-        if (word & 0x8000) == 0 {
-            break;
-        }
-    }
-
-    (value, i)
+fn read_modular_short(data: &[u8]) -> Result<(usize, usize)> {
+    read_modular_unsigned(data, 2, 15)
 }
 
-/// Read a ModularChar (MC) from a byte slice.
-/// Returns (value, bytes_consumed).
-fn read_modular_char(data: &[u8]) -> (usize, usize) {
-    let mut value: usize = 0;
+fn read_modular_char(data: &[u8]) -> Result<(usize, usize)> {
+    read_modular_unsigned(data, 1, 7)
+}
+
+fn read_modular_unsigned(data: &[u8], width: usize, payload_bits: u32) -> Result<(usize, usize)> {
+    let mut value = 0usize;
     let mut shift = 0;
-    let mut i = 0;
-
+    let mut offset = 0;
     loop {
-        if i >= data.len() {
-            break;
+        let chunk = data.get(offset..offset + width)
+            .ok_or_else(|| DxfError::Parse("Truncated DWG record framing".into()))?;
+        let word = if width == 2 {
+            u16::from_le_bytes([chunk[0], chunk[1]]) as usize
+        } else {
+            chunk[0] as usize
+        };
+        let payload = word & ((1 << payload_bits) - 1);
+        if shift >= usize::BITS || payload > (usize::MAX >> shift) {
+            return Err(DxfError::Parse("DWG record framing integer overflow".into()));
         }
-        let b = data[i];
-        i += 1;
-
-        value |= ((b & 0x7F) as usize) << shift;
-        shift += 7;
-
-        if (b & 0x80) == 0 {
-            break;
+        value |= payload << shift;
+        offset += width;
+        if word & (1 << payload_bits) == 0 {
+            return Ok((value, offset));
         }
+        shift += payload_bits;
     }
-
-    (value, i)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -998,7 +899,7 @@ mod tests {
     fn test_modular_short_read() {
         // Single word: value 42 (0x002A), no continuation
         let data = [0x2A, 0x00];
-        let (val, len) = read_modular_short(&data);
+        let (val, len) = read_modular_short(&data).unwrap();
         assert_eq!(val, 42);
         assert_eq!(len, 2);
     }
@@ -1007,7 +908,7 @@ mod tests {
     fn test_modular_short_multi_word() {
         // Two words: 0x8001 0x0001 → (1) | (1 << 15) = 1 + 32768 = 32769
         let data = [0x01, 0x80, 0x01, 0x00];
-        let (val, len) = read_modular_short(&data);
+        let (val, len) = read_modular_short(&data).unwrap();
         assert_eq!(val, 32769);
         assert_eq!(len, 4);
     }
@@ -1016,7 +917,7 @@ mod tests {
     fn test_modular_char_read() {
         // Single byte: value 42 (no continuation)
         let data = [42u8];
-        let (val, len) = read_modular_char(&data);
+        let (val, len) = read_modular_char(&data).unwrap();
         assert_eq!(val, 42);
         assert_eq!(len, 1);
     }
@@ -1025,7 +926,7 @@ mod tests {
     fn test_modular_char_multi_byte() {
         // Two bytes: 0x81 0x01 → (1) | (1 << 7) = 1 + 128 = 129
         let data = [0x81, 0x01];
-        let (val, len) = read_modular_char(&data);
+        let (val, len) = read_modular_char(&data).unwrap();
         assert_eq!(val, 129);
         assert_eq!(len, 2);
     }
@@ -1036,7 +937,7 @@ mod tests {
         // termination byte with bit 6 (0x40) set decodes as +64, never as a
         // negative value.
         let data = [0x40u8];
-        let (val, len) = read_modular_char(&data);
+        let (val, len) = read_modular_char(&data).unwrap();
         assert_eq!(val, 64);
         assert_eq!(len, 1);
     }
@@ -1051,14 +952,14 @@ mod tests {
         for &val in &[0, 1, 42, 127, 128, 255, 1000, 32767, 32768, 65535, 100000] {
             let mut buf = Vec::new();
             write_modular_short_bytes(&mut buf, val);
-            let (read_val, _) = read_modular_short(&buf);
+            let (read_val, _) = read_modular_short(&buf).unwrap();
             assert_eq!(read_val, val, "MS roundtrip failed for {}", val);
         }
 
         for &val in &[0, 1, 42, 127, 128, 255, 1000, 32767, 65535, 100000] {
             let mut buf = Vec::new();
             write_modular_char_bytes(&mut buf, val);
-            let (read_val, _) = read_modular_char(&buf);
+            let (read_val, _) = read_modular_char(&buf).unwrap();
             assert_eq!(read_val, val, "MC roundtrip failed for {}", val);
         }
     }

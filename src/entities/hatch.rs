@@ -1,7 +1,9 @@
 //! Hatch entity and boundary path types
 
 use crate::entities::{Entity, EntityCommon};
-use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector2, Vector3};
+use crate::types::{
+    BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector2, Vector3,
+};
 
 /// Hatch pattern type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,12 +51,12 @@ impl BoundaryPathFlags {
     pub fn new() -> Self {
         Self::DEFAULT
     }
-    
+
     /// Create from raw bits
     pub fn from_bits(bits: u32) -> Self {
         Self { bits }
     }
-    
+
     /// Get raw bits
     pub fn bits(&self) -> u32 {
         self.bits
@@ -71,11 +73,11 @@ impl BoundaryPathFlags {
     pub fn is_derived(&self) -> bool {
         self.bits & 4 != 0
     }
-    
+
     pub fn is_outermost(&self) -> bool {
         self.bits & 16 != 0
     }
-    
+
     pub fn is_not_closed(&self) -> bool {
         self.bits & 32 != 0
     }
@@ -95,7 +97,7 @@ impl BoundaryPathFlags {
             self.bits &= !2;
         }
     }
-    
+
     pub fn set_derived(&mut self, value: bool) {
         if value {
             self.bits |= 4;
@@ -202,7 +204,10 @@ impl PolylineEdge {
     /// Create a new polyline edge
     pub fn new(vertices: Vec<Vector2>, is_closed: bool) -> Self {
         Self {
-            vertices: vertices.into_iter().map(|v| Vector3::new(v.x, v.y, 0.0)).collect(),
+            vertices: vertices
+                .into_iter()
+                .map(|v| Vector3::new(v.x, v.y, 0.0))
+                .collect(),
             is_closed,
         }
     }
@@ -250,7 +255,7 @@ impl BoundaryPath {
             boundary_handles: Vec::new(),
         }
     }
-    
+
     /// Create a boundary path with flags
     pub fn with_flags(flags: BoundaryPathFlags) -> Self {
         Self {
@@ -275,7 +280,7 @@ impl BoundaryPath {
         }
         self.edges.push(edge);
     }
-    
+
     /// Add a boundary object handle
     pub fn add_boundary_handle(&mut self, handle: Handle) {
         self.boundary_handles.push(handle);
@@ -359,6 +364,12 @@ pub struct GradientColorEntry {
     pub value: f64,
     /// Color at this position
     pub color: Color,
+    /// Optional authored color name from a DWG CMC value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub color_name: Option<String>,
+    /// Optional authored color-book name from a DWG CMC value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub book_name: Option<String>,
 }
 
 /// Gradient color pattern
@@ -396,15 +407,20 @@ impl HatchGradientPattern {
             name: String::new(),
         }
     }
-    
+
     /// Check if gradient is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
-    
+
     /// Add a color to the gradient
     pub fn add_color(&mut self, value: f64, color: Color) {
-        self.colors.push(GradientColorEntry { value, color });
+        self.colors.push(GradientColorEntry {
+            value,
+            color,
+            color_name: None,
+            book_name: None,
+        });
     }
 }
 
@@ -455,8 +471,7 @@ pub struct Hatch {
     pub mpolygon_hatch_color: Color,
     /// MPOLYGON-only hatch X direction.
     pub mpolygon_x_direction: Vector2,
-    /// MPOLYGON trailer count retained independently from per-path handles.
-    pub mpolygon_boundary_handle_count: i32,
+    pub mpolygon_invalid_loops: Vec<BoundaryPath>,
 }
 
 impl Hatch {
@@ -480,8 +495,8 @@ impl Hatch {
             pixel_size: 0.0,
             gradient_color: HatchGradientPattern::new(),
             mpolygon_hatch_color: Color::ByLayer,
-            mpolygon_x_direction: Vector2::new(1.0, 0.0),
-            mpolygon_boundary_handle_count: 0,
+            mpolygon_x_direction: Vector2::ZERO,
+            mpolygon_invalid_loops: Vec::new(),
         }
     }
 
@@ -504,14 +519,16 @@ impl Hatch {
     /// Builder: Set the pattern angle
     pub fn with_pattern_angle(mut self, angle: f64) -> Self {
         self.pattern_angle = angle;
-        self.pattern.update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
+        self.pattern
+            .update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
         self
     }
 
     /// Builder: Set the pattern scale
     pub fn with_pattern_scale(mut self, scale: f64) -> Self {
         self.pattern_scale = scale;
-        self.pattern.update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
+        self.pattern
+            .update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
         self
     }
 
@@ -540,13 +557,15 @@ impl Hatch {
     /// Set the pattern angle (updates pattern)
     pub fn set_pattern_angle(&mut self, angle: f64) {
         self.pattern_angle = angle;
-        self.pattern.update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
+        self.pattern
+            .update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
     }
 
     /// Set the pattern scale (updates pattern)
     pub fn set_pattern_scale(&mut self, scale: f64) {
         self.pattern_scale = scale;
-        self.pattern.update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
+        self.pattern
+            .update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
     }
 
     /// Get the number of boundary paths
@@ -628,14 +647,30 @@ impl Entity for Hatch {
                     }
                     BoundaryEdge::CircularArc(arc) => {
                         // Add center and radius-based bounds
-                        all_points.push(Vector3::new(arc.center.x - arc.radius, arc.center.y - arc.radius, self.elevation));
-                        all_points.push(Vector3::new(arc.center.x + arc.radius, arc.center.y + arc.radius, self.elevation));
+                        all_points.push(Vector3::new(
+                            arc.center.x - arc.radius,
+                            arc.center.y - arc.radius,
+                            self.elevation,
+                        ));
+                        all_points.push(Vector3::new(
+                            arc.center.x + arc.radius,
+                            arc.center.y + arc.radius,
+                            self.elevation,
+                        ));
                     }
                     BoundaryEdge::EllipticArc(ellipse) => {
                         // Add center and major axis-based bounds
                         let major_len = ellipse.major_axis_endpoint.length();
-                        all_points.push(Vector3::new(ellipse.center.x - major_len, ellipse.center.y - major_len, self.elevation));
-                        all_points.push(Vector3::new(ellipse.center.x + major_len, ellipse.center.y + major_len, self.elevation));
+                        all_points.push(Vector3::new(
+                            ellipse.center.x - major_len,
+                            ellipse.center.y - major_len,
+                            self.elevation,
+                        ));
+                        all_points.push(Vector3::new(
+                            ellipse.center.x + major_len,
+                            ellipse.center.y + major_len,
+                            self.elevation,
+                        ));
                     }
                     BoundaryEdge::Spline(spline) => {
                         for cp in &spline.control_points {
@@ -655,7 +690,9 @@ impl Entity for Hatch {
             BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0))
         } else {
             BoundingBox3D::from_points(&all_points)
-                .unwrap_or_else(|| BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)))
+                .unwrap_or_else(|| {
+                    BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0))
+                })
                 .ocs_to_wcs(self.normal)
         }
     }
@@ -667,11 +704,11 @@ impl Entity for Hatch {
     fn entity_type(&self) -> &'static str {
         "HATCH"
     }
-    
+
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_hatch(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_hatch(self, transform);
     }
