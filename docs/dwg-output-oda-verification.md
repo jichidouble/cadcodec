@@ -57,6 +57,12 @@ edge_intersection_ltype），`legacy[6]` 被推到 `modern[13]`，且 `legacy[18
 `core_properties` 与 `legacy_properties` 均改用该映射；新增单元测试锁定字段位置。
 修复后 cn.dxf（含 24 个 VisualStyle）的 R2010/R2013/R2018 输出均通过 ODA 验证。
 
+> 上游同步后说明（合并 `hakanaktt/acadrust` main `a1a216d`）：VisualStyle 的 reader/writer
+> 已整体采用上游重写版本，`core_properties` 的 legacy(24)→core(28) 映射表也随之改为上游表
+> （`legacy[19]`→`modern[12]`）；本节所述的 fork 侧 `VisualStyle::legacy_to_core`（旧表）
+> 已被取代并随后删除，单元测试 `core_properties_follows_r2010_legacy_mapping` 现锁定上游表。
+> 上面的 ODA 验证结论只适用于当时的分支状态，若要在新基线上继续沿用，需要重新验证。
+
 ## VisualStyle 全版本专项验证（tests/dwg_visualstyle_matrix.rs）
 
 用含 24 个 VisualStyle 的 cn.dxf 输出全部 8 个版本，ODA 验证结果：

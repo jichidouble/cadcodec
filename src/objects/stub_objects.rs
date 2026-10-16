@@ -334,72 +334,6 @@ impl VisualStyle {
         ]
     }
 
-    /// Map the 24 legacy (R2007) VisualStyle properties onto the 28
-    /// R2010+ core positions.
-    ///
-    /// Legacy order (from DXF group codes 40-45, 63-67, 75-79, 92-93,
-    /// 170-175, 290):
-    ///   0  face_opacity           12 edge_overhang
-    ///   1  face_specular          13 edge_jitter
-    ///   2  face_mono_color        14 edge_silhouette_color
-    ///   3  edge_intersection_color 15 edge_silhouette_width
-    ///   4  edge_obscured_color    16 edge_halo_gap
-    ///   5  edge_obscured_ltype    17 edge_isolines
-    ///   6  edge_intersection_ltype 18 edge_do_hide_precision
-    ///   7  edge_crease_angle      19 display_settings
-    ///   8  edge_modifier          20 display_brightness
-    ///   9  edge_color             21 display_shadow_type
-    ///  10  edge_opacity           22 ACAD app-data value
-    ///  11  edge_width             23 ACAD app-data value
-    ///
-    /// R2010+ core order: face_lighting_model/quality/color_mode,
-    /// face_modifier, face_opacity, face_specular, face_mono_color,
-    /// edge_model, edge_style, edge_intersection_color,
-    /// edge_obscured_color, edge_obscured_ltype,
-    /// edge_intersection_ltype, edge_crease_angle, edge_modifier,
-    /// edge_color, edge_opacity, edge_width, edge_overhang, edge_jitter,
-    /// edge_silhouette_color, edge_silhouette_width, edge_halo_gap,
-    /// edge_isolines, edge_do_hide_precision, display_settings,
-    /// display_brightness, display_shadow_type.
-    pub(crate) fn legacy_to_core(legacy: &[VisualStyleProperty]) -> Vec<VisualStyleProperty> {
-        let mut core = vec![
-            VisualStyleProperty {
-                value: VisualStylePropertyValue::Long(0),
-                enabled: 1,
-            };
-            28
-        ];
-        for (l, m) in [
-            (0usize, 4usize),
-            (1, 5),
-            (2, 6),
-            (3, 9),
-            (4, 10),
-            (5, 11),
-            (6, 12),
-            (7, 13),
-            (8, 14),
-            (9, 15),
-            (10, 16),
-            (11, 17),
-            (12, 18),
-            (13, 19),
-            (14, 20),
-            (15, 21),
-            (16, 22),
-            (17, 23),
-            (18, 24),
-            (19, 25),
-            (20, 26),
-            (21, 27),
-        ] {
-            if let Some(p) = legacy.get(l) {
-                core[m] = p.clone();
-            }
-        }
-        core
-    }
-
     pub(crate) fn restore_post_2010_properties(
         &mut self,
         entries: &[crate::objects::XRecordEntry],
@@ -685,38 +619,6 @@ mod tests {
             legacy_prop(VisualStylePropertyValue::Long(0)),                   // 22 ACAD app-data
             legacy_prop(VisualStylePropertyValue::Double(0.0)),               // 23 ACAD app-data
         ]
-    }
-
-    #[test]
-    fn legacy_24_to_core_28_maps_in_r2010_order() {
-        let legacy = sample_legacy();
-        let core = VisualStyle::legacy_to_core(&legacy);
-        assert_eq!(core.len(), 28);
-
-        // face_modifier/edge_model/edge_style positions are filled by the
-        // caller's standalone fields; here they keep the Long(0) default.
-        assert_eq!(core[4], legacy[0]);   // face_opacity
-        assert_eq!(core[5], legacy[1]);   // face_specular
-        assert_eq!(core[6], legacy[2]);   // face_mono_color
-        assert_eq!(core[9], legacy[3]);   // edge_intersection_color
-        assert_eq!(core[10], legacy[4]);  // edge_obscured_color
-        assert_eq!(core[11], legacy[5]);  // edge_obscured_ltype
-        assert_eq!(core[12], legacy[6]);  // edge_intersection_ltype
-        assert_eq!(core[13], legacy[7]);  // edge_crease_angle
-        assert_eq!(core[14], legacy[8]);  // edge_modifier
-        assert_eq!(core[15], legacy[9]);  // edge_color
-        assert_eq!(core[16], legacy[10]); // edge_opacity
-        assert_eq!(core[17], legacy[11]); // edge_width
-        assert_eq!(core[18], legacy[12]); // edge_overhang
-        assert_eq!(core[19], legacy[13]); // edge_jitter
-        assert_eq!(core[20], legacy[14]); // edge_silhouette_color
-        assert_eq!(core[21], legacy[15]); // edge_silhouette_width
-        assert_eq!(core[22], legacy[16]); // edge_halo_gap
-        assert_eq!(core[23], legacy[17]); // edge_isolines
-        assert_eq!(core[24], legacy[18]); // edge_do_hide_precision
-        assert_eq!(core[25], legacy[19]); // display_settings
-        assert_eq!(core[26], legacy[20]); // display_brightness
-        assert_eq!(core[27], legacy[21]); // display_shadow_type
     }
 
     #[test]
