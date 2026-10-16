@@ -147,8 +147,64 @@ impl VisualStyle {
         if self.properties.len() >= 28 {
             values.clone_from_slice(&self.properties[..28]);
         } else if self.properties.len() == 24 {
-            let mapped = Self::legacy_to_core(&self.properties);
-            values[4..28].clone_from_slice(&mapped[4..28]);
+            for (legacy, modern) in [
+                (0, 4),
+                (1, 5),
+                (2, 6),
+                (3, 9),
+                (4, 10),
+                (5, 11),
+                (6, 13),
+                (7, 14),
+                (8, 15),
+                (9, 16),
+                (10, 17),
+                (11, 18),
+                (12, 19),
+                (13, 20),
+                (14, 21),
+                (15, 22),
+                (16, 23),
+                (17, 24),
+                (19, 12),
+                (20, 25),
+                (21, 26),
+                (22, 27),
+            ] {
+                // The R2010+ record writes each property by its own type, so
+                // a legacy value takes the modern slot's type (the legacy
+                // brightness is a long, the modern one a double).
+                let source = &self.properties[legacy];
+                let number = match &source.value {
+                    VisualStylePropertyValue::Short(v) => Some(*v as f64),
+                    VisualStylePropertyValue::Long(v) => Some(*v as f64),
+                    VisualStylePropertyValue::Double(v) => Some(*v),
+                    VisualStylePropertyValue::Bool(v) => Some(*v as u8 as f64),
+                    _ => None,
+                };
+                let value = match (&values[modern].value, number) {
+                    (VisualStylePropertyValue::Long(_), Some(n)) => {
+                        VisualStylePropertyValue::Long(n as i32)
+                    }
+                    // The legacy face opacity and specular are negative while
+                    // the face modifier leaves them off; the R2010+ values
+                    // are magnitudes and the modifier alone says so.
+                    (VisualStylePropertyValue::Double(_), Some(n)) if modern == 4 || modern == 5 => {
+                        VisualStylePropertyValue::Double(n.abs())
+                    }
+                    (VisualStylePropertyValue::Double(_), Some(n)) => {
+                        VisualStylePropertyValue::Double(n)
+                    }
+                    (VisualStylePropertyValue::Bool(_), Some(n)) => {
+                        VisualStylePropertyValue::Bool(n != 0.0)
+                    }
+                    _ => source.value.clone(),
+                };
+                values[modern] = VisualStyleProperty {
+                    value,
+                    enabled: source.enabled,
+                };
+            }
         } else {
             for (index, property) in self.properties.iter().take(28).enumerate() {
                 values[index] = property.clone();
