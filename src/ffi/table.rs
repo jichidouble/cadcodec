@@ -103,11 +103,7 @@ pub unsafe extern "C" fn dwg_layer_get_handle(
 
 /// Set the layer color at `index`.
 #[no_mangle]
-pub unsafe extern "C" fn dwg_layer_set_color(
-    data: *mut DwgData,
-    index: i32,
-    color: i32,
-) -> i32 {
+pub unsafe extern "C" fn dwg_layer_set_color(data: *mut DwgData, index: i32, color: i32) -> i32 {
     if data.is_null() {
         return DWG_EINVAL;
     }
@@ -175,9 +171,13 @@ fn table_name<'a>(ffi: &'a FfiDocument, table: i32, index: i32) -> Option<&'a st
     let i = index as usize;
     match table {
         t if t == DwgTableKind::Layer as i32 => ffi.doc.layers.iter().nth(i).map(|e| e.name()),
-        t if t == DwgTableKind::Block as i32 => ffi.doc.block_records.iter().nth(i).map(|e| e.name()),
+        t if t == DwgTableKind::Block as i32 => {
+            ffi.doc.block_records.iter().nth(i).map(|e| e.name())
+        }
         t if t == DwgTableKind::Style as i32 => ffi.doc.text_styles.iter().nth(i).map(|e| e.name()),
-        t if t == DwgTableKind::DimStyle as i32 => ffi.doc.dim_styles.iter().nth(i).map(|e| e.name()),
+        t if t == DwgTableKind::DimStyle as i32 => {
+            ffi.doc.dim_styles.iter().nth(i).map(|e| e.name())
+        }
         _ => None,
     }
 }

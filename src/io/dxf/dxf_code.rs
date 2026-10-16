@@ -793,7 +793,7 @@ impl DxfCode {
             1031 => DxfCode::XDataWorldZCoordinate,
             1012 => DxfCode::XDataWorldXDisplacement,
             1022 => DxfCode::XDataWorldYDisplacement,
-            1032 => DxfCode::XDataWorldZCoordinate,
+            1032 => DxfCode::XDataWorldZDisplacement,
             1013 => DxfCode::XDataWorldXDirection,
             1023 => DxfCode::XDataWorldYDirection,
             1033 => DxfCode::XDataWorldZDirection,

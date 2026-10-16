@@ -2,7 +2,7 @@
 //!
 //! Concrete setters are added here as the FFI mutation surface expands.
 
-use crate::entities::EntityType;
+use crate::entities::{EntityType, LwVertex, PolyfaceVertex, Spline, Vertex2D, Vertex3DPolyline};
 use crate::ffi::error::set_last_error;
 use crate::ffi::object::{DwgObjectType, FfiDocument};
 use crate::ffi::types::*;
@@ -151,6 +151,853 @@ fn normalize_direction(x: f64, y: f64, z: f64) -> Vector3 {
     let z = z / scale;
     let length = (x * x + y * y + z * z).sqrt();
     Vector3::new(x / length, y / length, z / length)
+}
+
+fn valid_index(index: i32, len: usize) -> Option<usize> {
+    let index = usize::try_from(index).ok()?;
+    (index < len).then_some(index)
+}
+
+macro_rules! vec3_collection_setters {
+    (
+        $set_name:ident,
+        $append_name:ident,
+        $remove_name:ident,
+        $clear_name:ident,
+        $kind:ident,
+        $entity:ident,
+        $constructor:path,
+        $field:ident
+    ) => {
+        #[doc = concat!("Set one ", stringify!($kind), " vertex.")]
+        #[no_mangle]
+        pub unsafe extern "C" fn $set_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            index: i32,
+            x: f64,
+            y: f64,
+            z: f64,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            if !finite3(x, y, z) {
+                set_last_error(DWG_EINVAL, "coordinates must be finite");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$entity(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    let Some(index) = valid_index(index, entity.vertices.len()) else {
+                        return Err((DWG_EINVAL, "vertex index is out of range"));
+                    };
+                    entity.vertices[index].$field = Vector3::new(x, y, z);
+                    Ok(())
+                },
+            )
+        }
+
+        #[doc = concat!("Append one ", stringify!($kind), " vertex.")]
+        #[no_mangle]
+        pub unsafe extern "C" fn $append_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            x: f64,
+            y: f64,
+            z: f64,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            if !finite3(x, y, z) {
+                set_last_error(DWG_EINVAL, "coordinates must be finite");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$entity(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    entity.vertices.push($constructor(Vector3::new(x, y, z)));
+                    Ok(())
+                },
+            )
+        }
+
+        #[doc = concat!("Remove one ", stringify!($kind), " vertex.")]
+        #[no_mangle]
+        pub unsafe extern "C" fn $remove_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            index: i32,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$entity(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    let Some(index) = valid_index(index, entity.vertices.len()) else {
+                        return Err((DWG_EINVAL, "vertex index is out of range"));
+                    };
+                    entity.vertices.remove(index);
+                    Ok(())
+                },
+            )
+        }
+
+        #[doc = concat!("Clear all ", stringify!($kind), " vertices.")]
+        #[no_mangle]
+        pub unsafe extern "C" fn $clear_name(data: *mut DwgData, obj: *const DwgObject) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                |entity| {
+                    let EntityType::$entity(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    entity.vertices.clear();
+                    Ok(())
+                },
+            )
+        }
+    };
+}
+
+/// Set one LWPOLYLINE vertex location while preserving its segment metadata.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_lwpolyline_set_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+    x: f64,
+    y: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite(x) || !finite(y) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::LwPolyline),
+        move |entity| {
+            let EntityType::LwPolyline(polyline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, polyline.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            polyline.vertices[index].location = Vector2::new(x, y);
+            Ok(())
+        },
+    )
+}
+
+/// Append one LWPOLYLINE vertex.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_lwpolyline_append_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite(x) || !finite(y) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::LwPolyline),
+        move |entity| {
+            let EntityType::LwPolyline(polyline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            polyline.vertices.push(LwVertex::new(Vector2::new(x, y)));
+            Ok(())
+        },
+    )
+}
+
+/// Remove one LWPOLYLINE vertex.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_lwpolyline_remove_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::LwPolyline),
+        move |entity| {
+            let EntityType::LwPolyline(polyline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, polyline.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            polyline.vertices.remove(index);
+            Ok(())
+        },
+    )
+}
+
+/// Clear all LWPOLYLINE vertices.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_lwpolyline_clear_vertices(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::LwPolyline),
+        |entity| {
+            let EntityType::LwPolyline(polyline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            polyline.vertices.clear();
+            Ok(())
+        },
+    )
+}
+
+vec3_collection_setters!(
+    dwg_entity_polyline2d_set_vertex,
+    dwg_entity_polyline2d_append_vertex,
+    dwg_entity_polyline2d_remove_vertex,
+    dwg_entity_polyline2d_clear_vertices,
+    Polyline2D,
+    Polyline2D,
+    Vertex2D::new,
+    location
+);
+vec3_collection_setters!(
+    dwg_entity_polyline3d_set_vertex,
+    dwg_entity_polyline3d_append_vertex,
+    dwg_entity_polyline3d_remove_vertex,
+    dwg_entity_polyline3d_clear_vertices,
+    Polyline3D,
+    Polyline3D,
+    Vertex3DPolyline::new,
+    position
+);
+
+fn polyface_face_uses_vertex(face: &crate::entities::PolyfaceFace, vertex: u16) -> bool {
+    [face.index1, face.index2, face.index3, face.index4]
+        .into_iter()
+        .any(|index| index.unsigned_abs() == vertex)
+}
+
+fn remap_polyface_face_index(index: &mut i16, removed_vertex: u16) {
+    let absolute = index.unsigned_abs();
+    if absolute > removed_vertex {
+        let invisible = *index < 0;
+        let remapped = (absolute - 1) as i16;
+        *index = if invisible { -remapped } else { remapped };
+    }
+}
+
+/// Set one POLYFACE MESH vertex location while preserving its metadata.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_polyface_mesh_set_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::PolyfaceMesh),
+        move |entity| {
+            let EntityType::PolyfaceMesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, mesh.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            mesh.vertices[index].location = Vector3::new(x, y, z);
+            Ok(())
+        },
+    )
+}
+
+/// Append one POLYFACE MESH vertex.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_polyface_mesh_append_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::PolyfaceMesh),
+        move |entity| {
+            let EntityType::PolyfaceMesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if mesh.vertices.len() >= i16::MAX as usize {
+                return Err((DWG_EINVAL, "polyface vertex count is too large"));
+            }
+            mesh.vertices
+                .push(PolyfaceVertex::new(Vector3::new(x, y, z)));
+            Ok(())
+        },
+    )
+}
+
+/// Remove one POLYFACE MESH vertex and remap subsequent face references.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_polyface_mesh_remove_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::PolyfaceMesh),
+        move |entity| {
+            let EntityType::PolyfaceMesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, mesh.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            let removed_vertex = u16::try_from(index + 1)
+                .map_err(|_| (DWG_EINVAL, "polyface vertex index is too large"))?;
+            if mesh
+                .faces
+                .iter()
+                .any(|face| polyface_face_uses_vertex(face, removed_vertex))
+            {
+                return Err((
+                    DWG_EINVAL,
+                    "cannot remove a polyface vertex referenced by a face",
+                ));
+            }
+            mesh.vertices.remove(index);
+            for face in &mut mesh.faces {
+                remap_polyface_face_index(&mut face.index1, removed_vertex);
+                remap_polyface_face_index(&mut face.index2, removed_vertex);
+                remap_polyface_face_index(&mut face.index3, removed_vertex);
+                remap_polyface_face_index(&mut face.index4, removed_vertex);
+            }
+            Ok(())
+        },
+    )
+}
+
+/// Clear all POLYFACE MESH vertices when no face records reference them.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_polyface_mesh_clear_vertices(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::PolyfaceMesh),
+        |entity| {
+            let EntityType::PolyfaceMesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !mesh.faces.is_empty() {
+                return Err((
+                    DWG_EINVAL,
+                    "cannot clear polyface vertices while faces exist",
+                ));
+            }
+            mesh.vertices.clear();
+            Ok(())
+        },
+    )
+}
+
+macro_rules! vec3_entity_collection_setters {
+    ($set_name:ident, $append_name:ident, $remove_name:ident, $clear_name:ident, $kind:ident) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $set_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            index: i32,
+            x: f64,
+            y: f64,
+            z: f64,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            if !finite3(x, y, z) {
+                set_last_error(DWG_EINVAL, "coordinates must be finite");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$kind(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    let Some(index) = valid_index(index, entity.vertices.len()) else {
+                        return Err((DWG_EINVAL, "vertex index is out of range"));
+                    };
+                    entity.vertices[index] = Vector3::new(x, y, z);
+                    Ok(())
+                },
+            )
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $append_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            x: f64,
+            y: f64,
+            z: f64,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            if !finite3(x, y, z) {
+                set_last_error(DWG_EINVAL, "coordinates must be finite");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$kind(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    entity.vertices.push(Vector3::new(x, y, z));
+                    Ok(())
+                },
+            )
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $remove_name(
+            data: *mut DwgData,
+            obj: *const DwgObject,
+            index: i32,
+        ) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                move |entity| {
+                    let EntityType::$kind(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    let Some(index) = valid_index(index, entity.vertices.len()) else {
+                        return Err((DWG_EINVAL, "vertex index is out of range"));
+                    };
+                    entity.vertices.remove(index);
+                    Ok(())
+                },
+            )
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $clear_name(data: *mut DwgData, obj: *const DwgObject) -> i32 {
+            if data.is_null() {
+                set_last_error(DWG_EINVAL, "document pointer is null");
+                return DWG_EINVAL;
+            }
+            (&mut *(data as *mut FfiDocument)).mutate_entity(
+                obj,
+                Some(DwgObjectType::$kind),
+                |entity| {
+                    let EntityType::$kind(entity) = entity else {
+                        return Err((DWG_ETYPE, "entity type does not match setter"));
+                    };
+                    entity.vertices.clear();
+                    Ok(())
+                },
+            )
+        }
+    };
+}
+
+vec3_entity_collection_setters!(
+    dwg_entity_leader_set_vertex,
+    dwg_entity_leader_append_vertex,
+    dwg_entity_leader_remove_vertex,
+    dwg_entity_leader_clear_vertices,
+    Leader
+);
+
+/// Set one MESH vertex location.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_set_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, mesh.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            mesh.vertices[index] = Vector3::new(x, y, z);
+            Ok(())
+        },
+    )
+}
+
+/// Append one MESH vertex.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_append_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            mesh.vertices.push(Vector3::new(x, y, z));
+            Ok(())
+        },
+    )
+}
+
+/// Remove an unreferenced MESH vertex and remap subsequent topology indices.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_remove_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let Some(index) = valid_index(index, mesh.vertices.len()) else {
+                return Err((DWG_EINVAL, "vertex index is out of range"));
+            };
+            if mesh.faces.iter().any(|face| face.vertices.contains(&index))
+                || mesh
+                    .edges
+                    .iter()
+                    .any(|edge| edge.start == index || edge.end == index)
+            {
+                return Err((
+                    DWG_EINVAL,
+                    "cannot remove a mesh vertex referenced by topology",
+                ));
+            }
+            mesh.vertices.remove(index);
+            for face in &mut mesh.faces {
+                for vertex in &mut face.vertices {
+                    if *vertex > index {
+                        *vertex -= 1;
+                    }
+                }
+            }
+            for edge in &mut mesh.edges {
+                if edge.start > index {
+                    edge.start -= 1;
+                }
+                if edge.end > index {
+                    edge.end -= 1;
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
+/// Clear all MESH vertices and edges when no faces remain.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_clear_vertices(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(obj, Some(DwgObjectType::Mesh), |entity| {
+        let EntityType::Mesh(mesh) = entity else {
+            return Err((DWG_ETYPE, "entity type does not match setter"));
+        };
+        if !mesh.faces.is_empty() {
+            return Err((DWG_EINVAL, "cannot clear mesh vertices while faces exist"));
+        }
+        mesh.vertices.clear();
+        mesh.edges.clear();
+        Ok(())
+    })
+}
+
+unsafe fn read_mesh_face_indices(
+    indices: *const u32,
+    count: usize,
+    vertex_count: usize,
+) -> Result<Vec<usize>, (i32, &'static str)> {
+    if indices.is_null() || count < 3 {
+        return Err((
+            DWG_EINVAL,
+            "mesh faces require at least three vertex indices",
+        ));
+    }
+    let mut vertices = Vec::with_capacity(count);
+    for offset in 0..count {
+        let value = *indices.add(offset) as usize;
+        if value >= vertex_count {
+            return Err((DWG_EINVAL, "mesh vertex index is out of range"));
+        }
+        vertices.push(value);
+    }
+    Ok(vertices)
+}
+
+/// Replace one MESH face vertex index and recompute edges.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_set_face_vertex(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    face: i32,
+    slot: i32,
+    vertex: u32,
+) -> i32 {
+    if data.is_null() || face < 0 || slot < 0 {
+        set_last_error(DWG_EINVAL, "mesh face or slot index is invalid");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let face = face as usize;
+            let slot = slot as usize;
+            let vertex = vertex as usize;
+            if vertex >= mesh.vertices.len() {
+                return Err((DWG_EINVAL, "mesh vertex index is out of range"));
+            }
+            let Some(face) = mesh.faces.get_mut(face) else {
+                return Err((DWG_EINVAL, "mesh face index is out of range"));
+            };
+            let Some(slot) = face.vertices.get_mut(slot) else {
+                return Err((DWG_EINVAL, "mesh face slot is out of range"));
+            };
+            *slot = vertex;
+            mesh.compute_edges();
+            Ok(())
+        },
+    )
+}
+
+/// Replace a MESH face with indices supplied by the caller.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_set_face(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    face: i32,
+    indices: *const u32,
+    count: usize,
+) -> i32 {
+    if data.is_null() || face < 0 {
+        set_last_error(DWG_EINVAL, "document pointer or mesh face index is invalid");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let vertices = read_mesh_face_indices(indices, count, mesh.vertices.len())?;
+            let face = face as usize;
+            let Some(target) = mesh.faces.get_mut(face) else {
+                return Err((DWG_EINVAL, "mesh face index is out of range"));
+            };
+            target.vertices = vertices;
+            mesh.compute_edges();
+            Ok(())
+        },
+    )
+}
+
+/// Append a MESH face with indices supplied by the caller.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_append_face(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    indices: *const u32,
+    count: usize,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let vertices = read_mesh_face_indices(indices, count, mesh.vertices.len())?;
+            mesh.faces.push(crate::entities::MeshFace::new(vertices));
+            mesh.compute_edges();
+            Ok(())
+        },
+    )
+}
+
+/// Remove one MESH face and recompute edges.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_remove_face(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    face: i32,
+) -> i32 {
+    if data.is_null() || face < 0 {
+        set_last_error(DWG_EINVAL, "document pointer or mesh face index is invalid");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Mesh),
+        move |entity| {
+            let EntityType::Mesh(mesh) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            let face = face as usize;
+            if face >= mesh.faces.len() {
+                return Err((DWG_EINVAL, "mesh face index is out of range"));
+            }
+            mesh.faces.remove(face);
+            mesh.compute_edges();
+            Ok(())
+        },
+    )
+}
+
+/// Clear all MESH faces and derived edges.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_clear_faces(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(obj, Some(DwgObjectType::Mesh), |entity| {
+        let EntityType::Mesh(mesh) = entity else {
+            return Err((DWG_ETYPE, "entity type does not match setter"));
+        };
+        mesh.faces.clear();
+        mesh.edges.clear();
+        Ok(())
+    })
 }
 
 /// Set an entity's layer name.
@@ -350,14 +1197,26 @@ f64_setter!(
     height,
     positive
 );
-string_setter!(dwg_entity_tolerance_set_text, Tolerance, Tolerance, text, allow_empty);
+string_setter!(
+    dwg_entity_tolerance_set_text,
+    Tolerance,
+    Tolerance,
+    text,
+    allow_empty
+);
 vec3_setter!(
     dwg_entity_tolerance_set_insertion_point,
     Tolerance,
     Tolerance,
     insertion_point
 );
-string_setter!(dwg_entity_mline_set_style_name, MLine, MLine, style_name, allow_empty);
+string_setter!(
+    dwg_entity_mline_set_style_name,
+    MLine,
+    MLine,
+    style_name,
+    allow_empty
+);
 vec3_setter!(dwg_entity_mline_set_start_point, MLine, MLine, start_point);
 f64_setter!(
     dwg_entity_mline_set_scale_factor,
@@ -918,3 +1777,698 @@ vec3_setter!(
     Wipeout,
     insertion_point
 );
+
+/// Set a SPLINE entity's degree and regenerate its clamped knot vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SPLINE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_spline_set_degree(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    degree: i32,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !(1..=25).contains(&degree) {
+        set_last_error(DWG_EINVAL, "spline degree must be between 1 and 25");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Spline),
+        move |entity| {
+            let EntityType::Spline(spline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !spline.control_points.is_empty() && degree as usize >= spline.control_points.len() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline degree must be less than the control point count",
+                ));
+            }
+            spline.degree = degree;
+            spline.knots =
+                Spline::generate_clamped_knots(degree as usize, spline.control_points.len());
+            Ok(())
+        },
+    )
+}
+
+/// Replace one zero-based SPLINE control point and regenerate its clamped knot vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SPLINE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_spline_set_control_point(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Spline),
+        move |entity| {
+            let EntityType::Spline(spline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !spline.fit_points.is_empty() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline control points cannot be changed when fit points are present",
+                ));
+            }
+            let Some(index) = valid_index(index, spline.control_points.len()) else {
+                return Err((DWG_EINVAL, "control point index is out of range"));
+            };
+            spline.control_points[index] = Vector3::new(x, y, z);
+            spline.knots =
+                Spline::generate_clamped_knots(spline.degree as usize, spline.control_points.len());
+            Ok(())
+        },
+    )
+}
+
+/// Append a SPLINE control point and regenerate its clamped knot vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SPLINE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_spline_append_control_point(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    if !finite3(x, y, z) {
+        set_last_error(DWG_EINVAL, "coordinates must be finite");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Spline),
+        move |entity| {
+            let EntityType::Spline(spline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !spline.fit_points.is_empty() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline control points cannot be changed when fit points are present",
+                ));
+            }
+            let Some(new_len) = spline.control_points.len().checked_add(1) else {
+                return Err((DWG_EINVAL, "control point count is too large"));
+            };
+            if !(1..=25).contains(&spline.degree) || new_len <= spline.degree as usize {
+                return Err((
+                    DWG_EINVAL,
+                    "control point count must be greater than the spline degree",
+                ));
+            }
+            spline.control_points.push(Vector3::new(x, y, z));
+            if !spline.weights.is_empty() {
+                spline.weights.push(1.0);
+            }
+            spline.knots = Spline::generate_clamped_knots(spline.degree as usize, new_len);
+            Ok(())
+        },
+    )
+}
+
+/// Remove one zero-based SPLINE control point and regenerate its clamped knot vector.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SPLINE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_spline_remove_control_point(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+    index: i32,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Spline),
+        move |entity| {
+            let EntityType::Spline(spline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !spline.fit_points.is_empty() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline control points cannot be changed when fit points are present",
+                ));
+            }
+            let Some(index) = valid_index(index, spline.control_points.len()) else {
+                return Err((DWG_EINVAL, "control point index is out of range"));
+            };
+            let new_len = spline.control_points.len() - 1;
+            if new_len != 0
+                && (!(1..=25).contains(&spline.degree) || new_len <= spline.degree as usize)
+            {
+                return Err((
+                    DWG_EINVAL,
+                    "control point count must be greater than the spline degree",
+                ));
+            }
+            if !spline.weights.is_empty() && index >= spline.weights.len() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline weights do not match the control point collection",
+                ));
+            }
+            spline.control_points.remove(index);
+            if !spline.weights.is_empty() {
+                spline.weights.remove(index);
+            }
+            spline.knots = Spline::generate_clamped_knots(spline.degree as usize, new_len);
+            Ok(())
+        },
+    )
+}
+
+/// Clear a SPLINE entity's control points, knots, and weights.
+///
+/// # Safety
+///
+/// `data` must be a valid document pointer and `obj` must be a valid SPLINE object from that
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_spline_clear_control_points(
+    data: *mut DwgData,
+    obj: *const DwgObject,
+) -> i32 {
+    if data.is_null() {
+        set_last_error(DWG_EINVAL, "document pointer is null");
+        return DWG_EINVAL;
+    }
+    (&mut *(data as *mut FfiDocument)).mutate_entity(
+        obj,
+        Some(DwgObjectType::Spline),
+        move |entity| {
+            let EntityType::Spline(spline) = entity else {
+                return Err((DWG_ETYPE, "entity type does not match setter"));
+            };
+            if !spline.fit_points.is_empty() {
+                return Err((
+                    DWG_EINVAL,
+                    "spline control points cannot be changed when fit points are present",
+                ));
+            }
+            spline.control_points.clear();
+            spline.knots.clear();
+            spline.weights.clear();
+            Ok(())
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entities::{
+        Leader, Mesh, MeshEdge, MeshFace, PolyfaceFace, PolyfaceMesh, PolyfaceVertex, Spline,
+    };
+    use crate::ffi::entity::dwg_entity_mesh_get_face_vertex;
+    use crate::types::Handle;
+    use crate::{CadDocument, EntityType};
+
+    fn spline_fixture(spline: Spline) -> (FfiDocument, *const DwgObject, Handle) {
+        let mut doc = CadDocument::new();
+        doc.add_entity(EntityType::Spline(spline)).unwrap();
+        let ffi = FfiDocument::new(doc);
+        let (obj, handle) = {
+            let object = ffi
+                .objects
+                .iter()
+                .find(|object| object.kind == DwgObjectType::Spline)
+                .unwrap();
+            (
+                object.as_ref() as *const _ as *const DwgObject,
+                object.handle,
+            )
+        };
+        (ffi, obj, handle)
+    }
+
+    fn spline_entity(ffi: &FfiDocument, handle: Handle) -> &Spline {
+        let EntityType::Spline(spline) = ffi.doc.get_entity(handle).unwrap() else {
+            panic!("fixture entity is not a spline");
+        };
+        spline
+    }
+
+    fn polyface_fixture(mesh: PolyfaceMesh) -> (FfiDocument, *const DwgObject, Handle) {
+        let mut doc = CadDocument::new();
+        doc.add_entity(EntityType::PolyfaceMesh(mesh)).unwrap();
+        let ffi = FfiDocument::new(doc);
+        let (obj, handle) = {
+            let object = ffi
+                .objects
+                .iter()
+                .find(|object| object.kind == DwgObjectType::PolyfaceMesh)
+                .unwrap();
+            (
+                object.as_ref() as *const _ as *const DwgObject,
+                object.handle,
+            )
+        };
+        (ffi, obj, handle)
+    }
+
+    fn polyface_entity(ffi: &FfiDocument, handle: Handle) -> &PolyfaceMesh {
+        let EntityType::PolyfaceMesh(mesh) = ffi.doc.get_entity(handle).unwrap() else {
+            panic!("fixture entity is not a polyface mesh");
+        };
+        mesh
+    }
+
+    fn leader_fixture(leader: Leader) -> (FfiDocument, *const DwgObject, Handle) {
+        let mut doc = CadDocument::new();
+        doc.add_entity(EntityType::Leader(leader)).unwrap();
+        let ffi = FfiDocument::new(doc);
+        let (obj, handle) = {
+            let object = ffi
+                .objects
+                .iter()
+                .find(|object| object.kind == DwgObjectType::Leader)
+                .unwrap();
+            (
+                object.as_ref() as *const _ as *const DwgObject,
+                object.handle,
+            )
+        };
+        (ffi, obj, handle)
+    }
+
+    fn mesh_fixture(mesh: Mesh) -> (FfiDocument, *const DwgObject, Handle) {
+        let mut doc = CadDocument::new();
+        doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+        let ffi = FfiDocument::new(doc);
+        let (obj, handle) = {
+            let object = ffi
+                .objects
+                .iter()
+                .find(|object| object.kind == DwgObjectType::Mesh)
+                .unwrap();
+            (
+                object.as_ref() as *const _ as *const DwgObject,
+                object.handle,
+            )
+        };
+        (ffi, obj, handle)
+    }
+
+    fn mesh_entity(ffi: &FfiDocument, handle: Handle) -> &Mesh {
+        let EntityType::Mesh(mesh) = ffi.doc.get_entity(handle).unwrap() else {
+            panic!("fixture entity is not a mesh");
+        };
+        mesh
+    }
+
+    #[test]
+    fn phase3c_spline_collection_setters_keep_internal_collections_synchronized() {
+        let original_points = vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(2.0, 0.0, 0.0),
+            Vector3::new(3.0, 1.0, 0.0),
+            Vector3::new(4.0, 0.0, 0.0),
+        ];
+        let mut spline = Spline::from_control_points(3, original_points.clone());
+        spline.knots = vec![42.0];
+        spline.weights = vec![2.0, 3.0, 4.0, 5.0, 6.0];
+        spline.knot_tolerance = 0.125;
+        let (mut ffi, obj, handle) = spline_fixture(spline);
+        let data = (&mut ffi as *mut FfiDocument).cast::<DwgData>();
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_set_control_point(data, obj, 1, 11.0, 12.0, 13.0) },
+            DWG_OK
+        );
+        let spline = spline_entity(&ffi, handle);
+        assert_eq!(spline.control_points[0], original_points[0]);
+        assert_eq!(spline.control_points[1], Vector3::new(11.0, 12.0, 13.0));
+        assert_eq!(&spline.control_points[2..], &original_points[2..]);
+        assert_eq!(spline.weights, vec![2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(
+            spline.knots,
+            Spline::generate_clamped_knots(3, original_points.len())
+        );
+        assert_eq!(spline.knot_tolerance, 0.125);
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_append_control_point(data, obj, 21.0, 22.0, 23.0) },
+            DWG_OK
+        );
+        let spline = spline_entity(&ffi, handle);
+        assert_eq!(
+            spline.control_points.last(),
+            Some(&Vector3::new(21.0, 22.0, 23.0))
+        );
+        assert_eq!(spline.weights, vec![2.0, 3.0, 4.0, 5.0, 6.0, 1.0]);
+        assert_eq!(spline.knots, Spline::generate_clamped_knots(3, 6));
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_remove_control_point(data, obj, 1) },
+            DWG_OK
+        );
+        let spline = spline_entity(&ffi, handle);
+        assert_eq!(
+            spline.control_points,
+            vec![
+                original_points[0],
+                original_points[2],
+                original_points[3],
+                original_points[4],
+                Vector3::new(21.0, 22.0, 23.0),
+            ]
+        );
+        assert_eq!(spline.weights, vec![2.0, 4.0, 5.0, 6.0, 1.0]);
+        assert_eq!(spline.knots, Spline::generate_clamped_knots(3, 5));
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_set_degree(data, obj, 2) },
+            DWG_OK
+        );
+        let spline = spline_entity(&ffi, handle);
+        assert_eq!(spline.degree, 2);
+        assert_eq!(spline.knots, Spline::generate_clamped_knots(2, 5));
+        assert_eq!(spline.weights, vec![2.0, 4.0, 5.0, 6.0, 1.0]);
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_clear_control_points(data, obj) },
+            DWG_OK
+        );
+        let spline = spline_entity(&ffi, handle);
+        assert!(spline.control_points.is_empty());
+        assert!(spline.knots.is_empty());
+        assert!(spline.weights.is_empty());
+        assert_eq!(spline.degree, 2);
+        assert_eq!(spline.knot_tolerance, 0.125);
+    }
+
+    #[test]
+    fn phase3c_spline_collection_setters_preserve_fit_point_spline_state() {
+        let mut spline = Spline::from_fit_points(vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 2.0, 0.0),
+            Vector3::new(2.0, 1.0, 0.0),
+            Vector3::new(3.0, 3.0, 0.0),
+        ]);
+        spline.control_points = vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(2.0, 0.0, 0.0),
+            Vector3::new(3.0, 1.0, 0.0),
+        ];
+        spline.knots = Spline::generate_clamped_knots(3, 4);
+        spline.weights = vec![1.0, 1.5, 2.0, 2.5];
+        let (mut ffi, obj, handle) = spline_fixture(spline);
+        let expected = spline_entity(&ffi, handle).clone();
+        let data = (&mut ffi as *mut FfiDocument).cast::<DwgData>();
+
+        assert_eq!(
+            unsafe { dwg_entity_spline_set_control_point(data, obj, 0, 9.0, 8.0, 7.0) },
+            DWG_EINVAL
+        );
+        assert_eq!(spline_entity(&ffi, handle), &expected);
+        assert_eq!(
+            unsafe { dwg_entity_spline_append_control_point(data, obj, 9.0, 8.0, 7.0) },
+            DWG_EINVAL
+        );
+        assert_eq!(spline_entity(&ffi, handle), &expected);
+        assert_eq!(
+            unsafe { dwg_entity_spline_remove_control_point(data, obj, 0) },
+            DWG_EINVAL
+        );
+        assert_eq!(spline_entity(&ffi, handle), &expected);
+        assert_eq!(
+            unsafe { dwg_entity_spline_clear_control_points(data, obj) },
+            DWG_EINVAL
+        );
+        assert_eq!(spline_entity(&ffi, handle), &expected);
+    }
+
+    #[test]
+    fn phase3c_polyface_collection_setters_preserve_and_remap_face_references() {
+        let mut mesh = PolyfaceMesh::new();
+        for vertex in [
+            PolyfaceVertex::from_xyz(0.0, 0.0, 0.0),
+            PolyfaceVertex::from_xyz(1.0, 0.0, 0.0),
+            PolyfaceVertex::from_xyz(2.0, 0.0, 0.0),
+            PolyfaceVertex::from_xyz(3.0, 0.0, 0.0),
+        ] {
+            mesh.add_vertex(vertex);
+        }
+        mesh.add_face(PolyfaceFace::triangle_with_visibility(
+            1, 3, 4, true, false, false,
+        ));
+        mesh.add_face(PolyfaceFace::triangle(-3, 4, 1));
+        let (mut ffi, obj, handle) = polyface_fixture(mesh);
+        let data = (&mut ffi as *mut FfiDocument).cast::<DwgData>();
+        let original = polyface_entity(&ffi, handle).clone();
+
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_remove_vertex(data, obj, 0) },
+            DWG_EINVAL
+        );
+        assert_eq!(polyface_entity(&ffi, handle), &original);
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_clear_vertices(data, obj) },
+            DWG_EINVAL
+        );
+        assert_eq!(polyface_entity(&ffi, handle), &original);
+
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_set_vertex(data, obj, 0, 10.0, 11.0, 12.0) },
+            DWG_OK
+        );
+        assert_eq!(
+            polyface_entity(&ffi, handle).vertices[0].location,
+            Vector3::new(10.0, 11.0, 12.0)
+        );
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_append_vertex(data, obj, 4.0, 0.0, 0.0) },
+            DWG_OK
+        );
+        assert_eq!(polyface_entity(&ffi, handle).vertices.len(), 5);
+
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_remove_vertex(data, obj, 1) },
+            DWG_OK
+        );
+        let mesh = polyface_entity(&ffi, handle);
+        assert_eq!(mesh.vertices.len(), 4);
+        assert_eq!(mesh.faces[0].index1, -1);
+        assert_eq!(mesh.faces[0].index2, 2);
+        assert_eq!(mesh.faces[0].index3, 3);
+        assert_eq!(mesh.faces[0].index4, 0);
+        assert_eq!(mesh.faces[1].index1, -2);
+        assert_eq!(mesh.faces[1].index2, 3);
+        assert_eq!(mesh.faces[1].index3, 1);
+        assert_eq!(mesh.faces[1].index4, 0);
+
+        let EntityType::PolyfaceMesh(mesh) = ffi.doc.get_entity_mut(handle).unwrap() else {
+            panic!("fixture entity is not a polyface mesh");
+        };
+        mesh.faces.clear();
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_clear_vertices(data, obj) },
+            DWG_OK
+        );
+        assert!(polyface_entity(&ffi, handle).vertices.is_empty());
+    }
+
+    #[test]
+    fn phase3c_polyface_append_rejects_i16_vertex_limit() {
+        let mut mesh = PolyfaceMesh::new();
+        mesh.vertices
+            .resize(i16::MAX as usize, PolyfaceVertex::default());
+        let (mut ffi, obj, handle) = polyface_fixture(mesh);
+        let data = (&mut ffi as *mut FfiDocument).cast::<DwgData>();
+
+        assert_eq!(
+            unsafe { dwg_entity_polyface_mesh_append_vertex(data, obj, 1.0, 2.0, 3.0) },
+            DWG_EINVAL
+        );
+        assert_eq!(
+            polyface_entity(&ffi, handle).vertices.len(),
+            i16::MAX as usize
+        );
+    }
+
+    #[test]
+    fn phase3c_leader_and_mesh_vertex_setters_preserve_topology() {
+        let leader = Leader::from_vertices(vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+        ]);
+        let (mut leader_ffi, leader_obj, leader_handle) = leader_fixture(leader);
+        let leader_data = (&mut leader_ffi as *mut FfiDocument).cast::<DwgData>();
+        assert_eq!(
+            unsafe { dwg_entity_leader_set_vertex(leader_data, leader_obj, 0, 10.0, 11.0, 12.0) },
+            DWG_OK
+        );
+        assert_eq!(
+            unsafe { dwg_entity_leader_append_vertex(leader_data, leader_obj, 2.0, 3.0, 4.0) },
+            DWG_OK
+        );
+        assert_eq!(
+            unsafe { dwg_entity_leader_remove_vertex(leader_data, leader_obj, 2) },
+            DWG_OK
+        );
+        assert_eq!(
+            unsafe { dwg_entity_leader_set_vertex(leader_data, leader_obj, -1, 1.0, 2.0, 3.0) },
+            DWG_EINVAL
+        );
+        {
+            let EntityType::Leader(leader) = leader_ffi.doc.get_entity(leader_handle).unwrap()
+            else {
+                panic!("fixture entity is not a leader");
+            };
+            assert_eq!(leader.vertices[0], Vector3::new(10.0, 11.0, 12.0));
+            assert_eq!(leader.vertices.len(), 2);
+        }
+        assert_eq!(
+            unsafe { dwg_entity_leader_clear_vertices(leader_data, leader_obj) },
+            DWG_OK
+        );
+        let EntityType::Leader(leader) = leader_ffi.doc.get_entity(leader_handle).unwrap() else {
+            panic!("fixture entity is not a leader");
+        };
+        assert!(leader.vertices.is_empty());
+
+        let mut mesh = Mesh::new();
+        mesh.vertices = (0..5).map(|x| Vector3::new(x as f64, 0.0, 0.0)).collect();
+        mesh.faces.push(MeshFace::triangle(0, 2, 3));
+        mesh.edges.push(MeshEdge::new(2, 3));
+        mesh.edges.push(MeshEdge::new(3, 4));
+        let (mut mesh_ffi, mesh_obj, mesh_handle) = mesh_fixture(mesh);
+        let mesh_data = (&mut mesh_ffi as *mut FfiDocument).cast::<DwgData>();
+        assert_eq!(
+            unsafe { dwg_entity_mesh_set_vertex(mesh_data, mesh_obj, 0, 20.0, 21.0, 22.0) },
+            DWG_OK
+        );
+        assert_eq!(
+            unsafe { dwg_entity_mesh_append_vertex(mesh_data, mesh_obj, 5.0, 0.0, 0.0) },
+            DWG_OK
+        );
+        let before = mesh_entity(&mesh_ffi, mesh_handle).clone();
+        assert_eq!(
+            unsafe { dwg_entity_mesh_remove_vertex(mesh_data, mesh_obj, 0) },
+            DWG_EINVAL
+        );
+        assert_eq!(mesh_entity(&mesh_ffi, mesh_handle), &before);
+        assert_eq!(
+            unsafe { dwg_entity_mesh_remove_vertex(mesh_data, mesh_obj, 4) },
+            DWG_EINVAL
+        );
+        assert_eq!(mesh_entity(&mesh_ffi, mesh_handle), &before);
+        assert_eq!(
+            unsafe { dwg_entity_mesh_remove_vertex(mesh_data, mesh_obj, 1) },
+            DWG_OK
+        );
+        let mesh = mesh_entity(&mesh_ffi, mesh_handle);
+        assert_eq!(mesh.faces[0].vertices, vec![0, 1, 2]);
+        assert_eq!(mesh.edges[0].start, 1);
+        assert_eq!(mesh.edges[0].end, 2);
+        assert_eq!(mesh.edges[1].start, 2);
+        assert_eq!(mesh.edges[1].end, 3);
+        assert_eq!(
+            unsafe { dwg_entity_mesh_clear_vertices(mesh_data, mesh_obj) },
+            DWG_EINVAL
+        );
+        let EntityType::Mesh(mesh) = mesh_ffi.doc.get_entity_mut(mesh_handle).unwrap() else {
+            panic!("fixture entity is not a mesh");
+        };
+        mesh.faces.clear();
+        assert_eq!(
+            unsafe { dwg_entity_mesh_clear_vertices(mesh_data, mesh_obj) },
+            DWG_OK
+        );
+        assert!(mesh_entity(&mesh_ffi, mesh_handle).vertices.is_empty());
+        assert!(mesh_entity(&mesh_ffi, mesh_handle).edges.is_empty());
+    }
+
+    #[test]
+    fn phase3c_mesh_face_setters_recompute_edges() {
+        let mut mesh = Mesh::new();
+        mesh.vertices = (0..4).map(|x| Vector3::new(x as f64, 0.0, 0.0)).collect();
+        mesh.add_face(MeshFace::triangle(0, 1, 2));
+        mesh.compute_edges();
+        let (mut ffi, obj, handle) = mesh_fixture(mesh);
+        let data = (&mut ffi as *mut FfiDocument).cast::<DwgData>();
+
+        let mut vertex = u32::MAX;
+        assert_eq!(
+            unsafe { dwg_entity_mesh_get_face_vertex(obj, 0, 1, &mut vertex) },
+            DWG_OK
+        );
+        assert_eq!(vertex, 1);
+        assert_eq!(
+            unsafe { dwg_entity_mesh_set_face_vertex(data, obj, 0, 1, 3) },
+            DWG_OK
+        );
+        assert_eq!(mesh_entity(&ffi, handle).faces[0].vertices, vec![0, 3, 2]);
+
+        let replacement = [0_u32, 2, 3];
+        assert_eq!(
+            unsafe {
+                dwg_entity_mesh_set_face(data, obj, 0, replacement.as_ptr(), replacement.len())
+            },
+            DWG_OK
+        );
+        let appended = [1_u32, 2, 3];
+        assert_eq!(
+            unsafe { dwg_entity_mesh_append_face(data, obj, appended.as_ptr(), appended.len()) },
+            DWG_OK
+        );
+        assert_eq!(mesh_entity(&ffi, handle).faces.len(), 2);
+        let mut actual = mesh_entity(&ffi, handle).edges.clone();
+        actual.sort_by_key(|edge| (edge.start, edge.end));
+        let expected = {
+            let mut expected = mesh_entity(&ffi, handle).clone();
+            expected.compute_edges();
+            expected.edges.sort_by_key(|edge| (edge.start, edge.end));
+            expected.edges
+        };
+        assert_eq!(actual, expected);
+
+        assert_eq!(unsafe { dwg_entity_mesh_remove_face(data, obj, 0) }, DWG_OK);
+        assert_eq!(mesh_entity(&ffi, handle).faces.len(), 1);
+        assert_eq!(unsafe { dwg_entity_mesh_clear_faces(data, obj) }, DWG_OK);
+        assert!(mesh_entity(&ffi, handle).faces.is_empty());
+        assert!(mesh_entity(&ffi, handle).edges.is_empty());
+    }
+}

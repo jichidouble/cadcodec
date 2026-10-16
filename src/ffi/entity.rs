@@ -1,6 +1,11 @@
 //! Typed getters for the basic entity families (Phase 2).
 
-use crate::entities::{Arc, AttributeDefinition, Circle, Dimension, Ellipse, EntityType, Face3D, Hatch, Helix, Insert, Leader, Light, Line, LwPolyline, MLine, MText, Mesh, Point, PolyfaceMesh, Polyline2D, Polyline3D, RasterImage, Ray, Shape, Solid, Spline, Text, Tolerance, Underlay, Viewport, Wipeout, XLine};
+use crate::entities::{
+    Arc, AttributeDefinition, Circle, Dimension, Ellipse, EntityType, Face3D, Hatch, Helix, Insert,
+    Leader, Light, Line, LwPolyline, MLine, MText, Mesh, Point, PolyfaceMesh, Polyline2D,
+    Polyline3D, RasterImage, Ray, Shape, Solid, Spline, Text, Tolerance, Underlay, Viewport,
+    Wipeout, XLine,
+};
 use crate::ffi::object::FfiObject;
 use crate::ffi::types::*;
 use crate::ffi::util::{color_to_c, copy_c_string};
@@ -10,6 +15,9 @@ fn as_entity<'a>(obj: *const DwgObject) -> Result<&'a EntityType, i32> {
         return Err(DWG_EINVAL);
     }
     let ffi = unsafe { &*(obj as *const FfiObject) };
+    if !ffi.alive {
+        return Err(DWG_ENOTFOUND);
+    }
     if ffi.entity.is_null() {
         return Err(DWG_ETYPE);
     }
@@ -288,17 +296,29 @@ vec3_getter!(dwg_entity_arc_get_center, as_arc, center);
 f64_getter!(dwg_entity_arc_get_radius, as_arc, radius);
 f64_getter!(dwg_entity_arc_get_start_angle, as_arc, start_angle);
 f64_getter!(dwg_entity_arc_get_end_angle, as_arc, end_angle);
-vec3_getter!(dwg_entity_text_get_insertion_point, as_text, insertion_point);
+vec3_getter!(
+    dwg_entity_text_get_insertion_point,
+    as_text,
+    insertion_point
+);
 f64_getter!(dwg_entity_text_get_height, as_text, height);
 vec3_getter!(dwg_entity_point_get_location, as_point, location);
 vec3_getter!(dwg_entity_ellipse_get_center, as_ellipse, center);
 vec3_getter!(dwg_entity_ellipse_get_major_axis, as_ellipse, major_axis);
-f64_getter!(dwg_entity_ellipse_get_minor_axis_ratio, as_ellipse, minor_axis_ratio);
+f64_getter!(
+    dwg_entity_ellipse_get_minor_axis_ratio,
+    as_ellipse,
+    minor_axis_ratio
+);
 vec3_getter!(dwg_entity_ray_get_base_point, as_ray, base_point);
 vec3_getter!(dwg_entity_ray_get_direction, as_ray, direction);
 vec3_getter!(dwg_entity_xline_get_base_point, as_xline, base_point);
 vec3_getter!(dwg_entity_xline_get_direction, as_xline, direction);
-vec3_getter!(dwg_entity_mtext_get_insertion_point, as_mtext, insertion_point);
+vec3_getter!(
+    dwg_entity_mtext_get_insertion_point,
+    as_mtext,
+    insertion_point
+);
 f64_getter!(dwg_entity_mtext_get_height, as_mtext, height);
 vec3_getter!(dwg_entity_insert_get_insert_point, as_insert, insert_point);
 f64_getter!(dwg_entity_insert_get_rotation, as_insert, rotation);
@@ -309,22 +329,54 @@ f64_getter!(dwg_entity_viewport_get_height, as_viewport, height);
 f64_getter!(dwg_entity_hatch_get_elevation, as_hatch, elevation);
 f64_getter!(dwg_entity_hatch_get_pattern_angle, as_hatch, pattern_angle);
 f64_getter!(dwg_entity_hatch_get_pattern_scale, as_hatch, pattern_scale);
-vec3_getter!(dwg_entity_tolerance_get_insertion_point, as_tolerance, insertion_point);
-vec3_getter!(dwg_entity_attrdef_get_insertion_point, as_attribute_definition, insertion_point);
-f64_getter!(dwg_entity_attrdef_get_height, as_attribute_definition, height);
-vec3_getter!(dwg_entity_shape_get_insertion_point, as_shape, insertion_point);
+vec3_getter!(
+    dwg_entity_tolerance_get_insertion_point,
+    as_tolerance,
+    insertion_point
+);
+vec3_getter!(
+    dwg_entity_attrdef_get_insertion_point,
+    as_attribute_definition,
+    insertion_point
+);
+f64_getter!(
+    dwg_entity_attrdef_get_height,
+    as_attribute_definition,
+    height
+);
+vec3_getter!(
+    dwg_entity_shape_get_insertion_point,
+    as_shape,
+    insertion_point
+);
 f64_getter!(dwg_entity_shape_get_size, as_shape, size);
 f64_getter!(dwg_entity_shape_get_rotation, as_shape, rotation);
-vec3_getter!(dwg_entity_helix_get_axis_base_point, as_helix, axis_base_point);
+vec3_getter!(
+    dwg_entity_helix_get_axis_base_point,
+    as_helix,
+    axis_base_point
+);
 f64_getter!(dwg_entity_helix_get_radius, as_helix, radius);
 f64_getter!(dwg_entity_helix_get_turns, as_helix, turns);
 f64_getter!(dwg_entity_helix_get_turn_height, as_helix, turn_height);
 vec3_getter!(dwg_entity_mline_get_start_point, as_mline, start_point);
 f64_getter!(dwg_entity_mline_get_scale_factor, as_mline, scale_factor);
-vec3_getter!(dwg_entity_raster_image_get_insertion_point, as_raster_image, insertion_point);
-vec3_getter!(dwg_entity_underlay_get_insertion_point, as_underlay, insertion_point);
+vec3_getter!(
+    dwg_entity_raster_image_get_insertion_point,
+    as_raster_image,
+    insertion_point
+);
+vec3_getter!(
+    dwg_entity_underlay_get_insertion_point,
+    as_underlay,
+    insertion_point
+);
 vec3_getter!(dwg_entity_light_get_position, as_light, position);
-vec3_getter!(dwg_entity_wipeout_get_insertion_point, as_wipeout, insertion_point);
+vec3_getter!(
+    dwg_entity_wipeout_get_insertion_point,
+    as_wipeout,
+    insertion_point
+);
 
 /// Copy the TEXT entity's value into a caller-owned buffer.
 #[no_mangle]
@@ -399,7 +451,10 @@ pub unsafe extern "C" fn dwg_entity_get_linetype(
 
 /// Read the entity's linetype scale.
 #[no_mangle]
-pub unsafe extern "C" fn dwg_entity_get_linetype_scale(obj: *const DwgObject, scale: *mut f64) -> i32 {
+pub unsafe extern "C" fn dwg_entity_get_linetype_scale(
+    obj: *const DwgObject,
+    scale: *mut f64,
+) -> i32 {
     if scale.is_null() {
         return DWG_EINVAL;
     }
@@ -460,7 +515,10 @@ pub unsafe extern "C" fn dwg_entity_face3d_get_corner(
 
 /// Read the SPLINE degree.
 #[no_mangle]
-pub unsafe extern "C" fn dwg_entity_spline_get_degree(obj: *const DwgObject, degree: *mut i32) -> i32 {
+pub unsafe extern "C" fn dwg_entity_spline_get_degree(
+    obj: *const DwgObject,
+    degree: *mut i32,
+) -> i32 {
     if degree.is_null() {
         return DWG_EINVAL;
     }
@@ -713,6 +771,35 @@ pub unsafe extern "C" fn dwg_entity_mesh_get_face_vertex_count(
     }
 }
 
+/// Read one zero-based vertex index from a MESH face.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_entity_mesh_get_face_vertex(
+    obj: *const DwgObject,
+    face: i32,
+    slot: i32,
+    vertex: *mut u32,
+) -> i32 {
+    if vertex.is_null() || face < 0 || slot < 0 {
+        return DWG_EINVAL;
+    }
+    match as_mesh(obj) {
+        Ok(mesh) => {
+            let Some(face) = mesh.faces.get(face as usize) else {
+                return DWG_ENOTFOUND;
+            };
+            let Some(value) = face.vertices.get(slot as usize) else {
+                return DWG_ENOTFOUND;
+            };
+            let Ok(value) = u32::try_from(*value) else {
+                return DWG_EINVAL;
+            };
+            *vertex = value;
+            DWG_OK
+        }
+        Err(code) => code,
+    }
+}
+
 macro_rules! string_field_getter {
     ($name:ident, $as_ty:ident, $field:ident) => {
         #[no_mangle]
@@ -732,8 +819,16 @@ macro_rules! string_field_getter {
 
 string_field_getter!(dwg_entity_tolerance_get_text, as_tolerance, text);
 string_field_getter!(dwg_entity_attrdef_get_tag, as_attribute_definition, tag);
-string_field_getter!(dwg_entity_attrdef_get_prompt, as_attribute_definition, prompt);
-string_field_getter!(dwg_entity_attrdef_get_default_value, as_attribute_definition, default_value);
+string_field_getter!(
+    dwg_entity_attrdef_get_prompt,
+    as_attribute_definition,
+    prompt
+);
+string_field_getter!(
+    dwg_entity_attrdef_get_default_value,
+    as_attribute_definition,
+    default_value
+);
 string_field_getter!(dwg_entity_mline_get_style_name, as_mline, style_name);
 
 /// Copy the DIMENSION style name into a caller-owned buffer.
@@ -781,7 +876,10 @@ pub unsafe extern "C" fn dwg_entity_dimension_get_text_middle_point(
 /// Read the DIMENSION subtype (1 Aligned, 2 Linear, 3 Radius, 4 Diameter,
 /// 5 Angular2Ln, 6 Angular3Pt, 7 Ordinate, 8 Arc, 9 LargeRadial).
 #[no_mangle]
-pub unsafe extern "C" fn dwg_entity_dimension_get_subtype(obj: *const DwgObject, subtype: *mut i32) -> i32 {
+pub unsafe extern "C" fn dwg_entity_dimension_get_subtype(
+    obj: *const DwgObject,
+    subtype: *mut i32,
+) -> i32 {
     if subtype.is_null() {
         return DWG_EINVAL;
     }
@@ -806,7 +904,10 @@ pub unsafe extern "C" fn dwg_entity_dimension_get_subtype(obj: *const DwgObject,
 
 /// Read the DIMENSION measurement value.
 #[no_mangle]
-pub unsafe extern "C" fn dwg_entity_dimension_get_measurement(obj: *const DwgObject, value: *mut f64) -> i32 {
+pub unsafe extern "C" fn dwg_entity_dimension_get_measurement(
+    obj: *const DwgObject,
+    value: *mut f64,
+) -> i32 {
     if value.is_null() {
         return DWG_EINVAL;
     }

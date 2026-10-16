@@ -819,28 +819,22 @@ impl XRecord {
         self.synchronize_object_references();
     }
 
-    /// Rebuild the DWG object-id handle vector from 330-369 entries while
-    /// retaining decoded reference kinds where they still line up.
+    /// Rebuild the DWG object-id handle vector from 330-369 entries.
     pub fn synchronize_object_references(&mut self) {
-        let previous = self.object_references.clone();
         self.object_references = self
             .entries
             .iter()
             .filter(|entry| (330..=369).contains(&entry.code))
             .filter_map(|entry| entry.value.as_handle().map(|handle| (entry.code, handle)))
-            .enumerate()
-            .map(|(index, (code, handle))| ProxyObjectReference {
+            .map(|(code, handle)| ProxyObjectReference {
                 handle,
-                kind: previous
-                    .get(index)
-                    .map(|reference| reference.kind)
-                    .unwrap_or(match code {
-                        330..=339 => ProxyReferenceKind::SoftPointer,
-                        340..=349 => ProxyReferenceKind::HardPointer,
-                        350..=359 => ProxyReferenceKind::SoftOwnership,
-                        360..=369 => ProxyReferenceKind::HardOwnership,
-                        _ => ProxyReferenceKind::Undefined,
-                    }),
+                kind: match code {
+                    330..=339 => ProxyReferenceKind::SoftPointer,
+                    340..=349 => ProxyReferenceKind::HardPointer,
+                    350..=359 => ProxyReferenceKind::SoftOwnership,
+                    360..=369 => ProxyReferenceKind::HardOwnership,
+                    _ => ProxyReferenceKind::Undefined,
+                },
             })
             .collect();
         self.preserve_object_reference_stream = false;
@@ -956,6 +950,25 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert!(refs.contains(&Handle::new(100)));
         assert!(refs.contains(&Handle::new(200)));
+    }
+
+    #[test]
+    fn synchronize_object_references_reclassifies_replaced_group_code() {
+        let mut xrecord = XRecord::new();
+        let handle = Handle::new(100);
+        xrecord.add_handle(330, handle);
+        assert_eq!(
+            xrecord.object_references[0].kind,
+            ProxyReferenceKind::SoftPointer
+        );
+
+        xrecord.entries[0] = XRecordEntry::handle(360, handle);
+        xrecord.synchronize_object_references();
+
+        assert_eq!(
+            xrecord.object_references[0].kind,
+            ProxyReferenceKind::HardOwnership
+        );
     }
 
     #[test]

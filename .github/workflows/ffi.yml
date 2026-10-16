@@ -1,0 +1,71 @@
+name: FFI header
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ffi-gnu:
+    name: FFI / Windows GNU
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Install cbindgen
+        shell: pwsh
+        run: cargo install cbindgen --version 0.29.0 --locked
+      - name: Check FFI formatting
+        shell: pwsh
+        run: rustfmt --edition 2021 --check src/ffi/types.rs tests/ffi_header.rs
+      - name: Check generated header
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/generate_ffi_header.ps1 -Check
+      - name: Build GNU FFI library
+        shell: pwsh
+        run: cargo build --release --target x86_64-pc-windows-gnu --features ffi
+      - name: Run header contract test
+        shell: pwsh
+        run: cargo test --release --target x86_64-pc-windows-gnu --features ffi --test ffi_header
+      - name: Compile and run GNU C consumer
+        shell: pwsh
+        run: >-
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_ffi_header_smoke.ps1
+          -Compiler gcc
+          -Dll target/x86_64-pc-windows-gnu/release/acadrust.dll
+          -ImportLibrary target/x86_64-pc-windows-gnu/release/libacadrust.dll.a
+
+  ffi-msvc:
+    name: FFI / Windows MSVC
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install cbindgen
+        shell: pwsh
+        run: cargo install cbindgen --version 0.29.0 --locked
+      - name: Check FFI formatting
+        shell: pwsh
+        run: rustfmt --edition 2021 --check src/ffi/types.rs tests/ffi_header.rs
+      - name: Check generated header
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/generate_ffi_header.ps1 -Check
+      - name: Build MSVC FFI library
+        shell: pwsh
+        run: cargo build --release --target x86_64-pc-windows-msvc --features ffi
+      - name: Run header contract test
+        shell: pwsh
+        run: cargo test --release --target x86_64-pc-windows-msvc --features ffi --test ffi_header
+      - name: Compile and run MSVC C consumer
+        shell: pwsh
+        run: >-
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_ffi_header_smoke.ps1
+          -Compiler cl
+          -Dll target/x86_64-pc-windows-msvc/release/acadrust.dll
+          -ImportLibrary target/x86_64-pc-windows-msvc/release/acadrust.dll.lib

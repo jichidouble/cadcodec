@@ -31,10 +31,14 @@ pub extern "C" fn dwg_last_error(buf: *mut i8, cap: usize, needed: *mut usize) -
     if needed.is_null() || (!buf.is_null() && cap == 0) {
         return crate::ffi::types::DWG_EINVAL;
     }
-    let (code, msg) = LAST_ERROR.with(|s| s.borrow().clone()).unwrap_or((0, String::new()));
+    let (code, msg) = LAST_ERROR
+        .with(|s| s.borrow().clone())
+        .unwrap_or((0, String::new()));
     let bytes = msg.as_bytes();
     let total = bytes.len() + 1;
-    unsafe { *needed = total; }
+    unsafe {
+        *needed = total;
+    }
     if buf.is_null() {
         return crate::ffi::types::DWG_OK;
     }
@@ -51,7 +55,12 @@ pub extern "C" fn dwg_last_error(buf: *mut i8, cap: usize, needed: *mut usize) -
 /// Return the current thread's last error code, or `DWG_OK` when none.
 #[no_mangle]
 pub extern "C" fn dwg_last_error_code() -> i32 {
-    LAST_ERROR.with(|s| s.borrow().as_ref().map(|(c, _)| *c).unwrap_or(crate::ffi::types::DWG_OK))
+    LAST_ERROR.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|(c, _)| *c)
+            .unwrap_or(crate::ffi::types::DWG_OK)
+    })
 }
 
 #[cfg(test)]

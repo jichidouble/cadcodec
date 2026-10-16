@@ -172,6 +172,28 @@ impl ExtendedData {
         &self.records
     }
 
+    /// Get a record by its zero-based index.
+    pub fn record(&self, index: usize) -> Option<&ExtendedDataRecord> {
+        self.records.get(index)
+    }
+
+    /// Get a mutable record by its zero-based index.
+    pub fn record_mut(&mut self, index: usize) -> Option<&mut ExtendedDataRecord> {
+        self.records.get_mut(index)
+    }
+
+    /// Remove and return a record by its zero-based index.
+    ///
+    /// Named apart from `remove_record(application_name)` because the new
+    /// baseline already owns that name.
+    pub fn remove_record_at(&mut self, index: usize) -> Option<ExtendedDataRecord> {
+        if index < self.records.len() {
+            Some(self.records.remove(index))
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn records_mut(&mut self) -> &mut [ExtendedDataRecord] {
         &mut self.records
     }

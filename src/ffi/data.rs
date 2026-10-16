@@ -21,6 +21,30 @@ pub extern "C" fn dwg_data_create(out: *mut *mut DwgData) -> i32 {
     DWG_OK
 }
 
+/// Write the number of live document entities to `count`.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_data_entity_count(data: *const DwgData, count: *mut i32) -> i32 {
+    if data.is_null() || count.is_null() {
+        return DWG_EINVAL;
+    }
+    let ffi = &*(data as *const FfiDocument);
+    *count = ffi.doc.entity_count() as i32;
+    clear_last_error();
+    DWG_OK
+}
+
+/// Write the number of live entities and objects to `count`.
+#[no_mangle]
+pub unsafe extern "C" fn dwg_data_object_count(data: *const DwgData, count: *mut i32) -> i32 {
+    if data.is_null() || count.is_null() {
+        return DWG_EINVAL;
+    }
+    let ffi = &*(data as *const FfiDocument);
+    *count = ffi.objects.iter().filter(|object| object.alive).count() as i32;
+    clear_last_error();
+    DWG_OK
+}
+
 /// Destroy a document previously created by `dwg_data_create`. All object
 /// references obtained from this document become invalid.
 #[no_mangle]

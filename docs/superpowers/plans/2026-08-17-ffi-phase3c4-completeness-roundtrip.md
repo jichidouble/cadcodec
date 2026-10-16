@@ -24,6 +24,19 @@
 
 ---
 
+## Current Status (2026-08-28)
+
+- P3c4 implementation and verification are complete. The older task checkboxes
+  below are retained as the original execution plan; committed artifacts and
+  test results are the authoritative completion record.
+- Setter inventory: 84 getters, 11 read-only entries, and 74 exported setters
+  pass the pair and linker checks (d04f801, 56f9f73).
+- Error matrix and persistence coverage are committed in bab14e6, 466ffce, and
+  db106cf; the current release gates also cover these tests.
+- Targeted verification: 15 phase3c tests, 2 inventory tests, and 3 C setter
+  smoke tests passed. Repository-wide formatting still has baseline drift, so
+  no unrelated formatter rewrite was applied.
+
 ### Task 1: Getter/Setter ABI 清单与链接盘点
 
 **Files:**

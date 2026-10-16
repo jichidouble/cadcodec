@@ -1,8 +1,7 @@
 //! Opaque C ABI types and error codes.
 
-/// Opaque document handle. Points to `Box<CadDocument>`; the document is the
-/// sole ownership root. Created by `dwg_data_create`, destroyed by
-/// `dwg_data_destroy`.
+/// Opaque document handle. The document is the sole ownership root. Created
+/// by `dwg_data_create`, destroyed by `dwg_data_destroy`.
 #[repr(C)]
 pub struct DwgData {
     _priv: [u8; 0],

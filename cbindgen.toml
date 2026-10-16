@@ -1,0 +1,32 @@
+language = "C"
+cpp_compat = true
+pragma_once = true
+include_guard = "ACADRUST_DWG_API_H"
+documentation = true
+usize_is_size_t = true
+
+after_includes = """
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct DwgData DwgData;
+typedef void (*DwgNotificationCallback)(int32_t notification_type,
+                                        const char *message,
+                                        void *user_data);
+
+/**
+ * Install or clear the diagnostic callback for a document.
+ */
+int32_t dwg_set_notification_callback(DwgData *data,
+                                      DwgNotificationCallback callback,
+                                      void *user_data);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif
+"""
+
+[export]
+include = ["DwgObjectType", "DwgTableKind"]
+exclude = ["dwg_set_notification_callback", "DwgNotificationCallback"]

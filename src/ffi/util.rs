@@ -1,7 +1,7 @@
 //! Shared helpers for the C ABI surface.
 
-use crate::ffi::types::DWG_EINVAL;
 use crate::ffi::types::DWG_EBUFFER;
+use crate::ffi::types::DWG_EINVAL;
 use crate::ffi::types::DWG_OK;
 use crate::types::Color;
 
@@ -44,7 +44,9 @@ pub(crate) fn copy_c_string(text: &str, buf: *mut i8, cap: usize, needed: *mut u
     }
     let bytes = text.as_bytes();
     let total = bytes.len() + 1;
-    unsafe { *needed = total; }
+    unsafe {
+        *needed = total;
+    }
     if buf.is_null() {
         return DWG_OK;
     }

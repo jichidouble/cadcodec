@@ -8,9 +8,10 @@
 use std::ptr;
 
 use crate::document::CadDocument;
-use crate::entities::{Entity, EntityType};
+use crate::entities::EntityType;
 use crate::ffi::error::{clear_last_error, set_last_error};
-use crate::ffi::types::{DwgObject, DWG_EINVAL, DWG_ENOTFOUND, DWG_ETYPE, DWG_OK};
+use crate::ffi::notification::DwgNotificationCallback;
+use crate::ffi::types::{DwgObject, DWG_EINVAL, DWG_ENOMEM, DWG_ENOTFOUND, DWG_ETYPE, DWG_OK};
 use crate::objects::ObjectType;
 use crate::types::Handle;
 
@@ -50,6 +51,10 @@ pub enum DwgObjectType {
     Underlay = 29,
     Light = 30,
     Wipeout = 31,
+    Solid3D = 32,
+    Region = 33,
+    Body = 34,
+    Surface = 35,
     Other = 1000,
 }
 
@@ -60,12 +65,17 @@ pub struct FfiObject {
     pub entity: *const EntityType,
     pub object: *const ObjectType,
     pub next: *const FfiObject,
+    /// A removed record stays allocated until its document is destroyed so
+    /// callers holding an old pointer never observe freed memory.
+    pub alive: bool,
 }
 
 /// FFI wrapper around a document plus its object arena.
 pub struct FfiDocument {
     pub doc: CadDocument,
     pub objects: Vec<Box<FfiObject>>,
+    pub notification_callback: Option<DwgNotificationCallback>,
+    pub notification_user_data: *mut std::ffi::c_void,
 }
 
 #[allow(dead_code)]
@@ -104,6 +114,10 @@ fn entity_kind(e: &EntityType) -> DwgObjectType {
         EntityType::Underlay(_) => DwgObjectType::Underlay,
         EntityType::Light(_) => DwgObjectType::Light,
         EntityType::Wipeout(_) => DwgObjectType::Wipeout,
+        EntityType::Solid3D(_) => DwgObjectType::Solid3D,
+        EntityType::Region(_) => DwgObjectType::Region,
+        EntityType::Body(_) => DwgObjectType::Body,
+        EntityType::Surface(_) => DwgObjectType::Surface,
         _ => DwgObjectType::Other,
     }
 }
@@ -121,6 +135,7 @@ impl FfiDocument {
                 entity: e as *const EntityType,
                 object: ptr::null(),
                 next: ptr::null(),
+                alive: true,
             }));
         }
         let mut handles: Vec<Handle> = doc.objects.keys().copied().collect();
@@ -132,18 +147,109 @@ impl FfiDocument {
                 entity: ptr::null(),
                 object: &doc.objects[&h] as *const ObjectType,
                 next: ptr::null(),
+                alive: true,
             }));
         }
-        // Link next pointers after all Boxes exist (heap addresses stable).
-        for i in 0..objects.len() {
-            let next = if i + 1 < objects.len() {
-                objects[i + 1].as_ref() as *const FfiObject
-            } else {
-                ptr::null()
-            };
-            objects[i].next = next;
+        let mut ffi = FfiDocument {
+            doc,
+            objects,
+            notification_callback: None,
+            notification_user_data: std::ptr::null_mut(),
+        };
+        ffi.relink_objects();
+        ffi
+    }
+
+    /// Rebuild the active-object chain without moving any boxed arena record.
+    pub(crate) fn relink_objects(&mut self) {
+        let mut next = ptr::null();
+        for object in self.objects.iter_mut().rev() {
+            object.next = next;
+            if object.alive {
+                next = object.as_ref() as *const FfiObject;
+            }
         }
-        FfiDocument { doc, objects }
+    }
+
+    /// Add an entity to model space and append its stable FFI arena record.
+    pub(crate) fn add_entity(&mut self, entity: EntityType) -> Result<*mut DwgObject, i32> {
+        let handle = self.doc.add_entity(entity).map_err(|_| DWG_ENOMEM)?;
+        let entity = self.doc.get_entity(handle).ok_or(DWG_ENOTFOUND)?;
+        let mut object = Box::new(FfiObject {
+            kind: entity_kind(entity),
+            handle,
+            entity: entity as *const EntityType,
+            object: std::ptr::null(),
+            next: std::ptr::null(),
+            alive: true,
+        });
+        let object_ptr = object.as_mut() as *mut FfiObject as *mut DwgObject;
+        self.objects.push(object);
+        self.relink_objects();
+        Ok(object_ptr)
+    }
+
+    pub(crate) fn object_index(&self, obj: *const DwgObject) -> Result<usize, i32> {
+        if obj.is_null() {
+            return Err(DWG_EINVAL);
+        }
+        self.objects
+            .iter()
+            .position(|candidate| {
+                std::ptr::eq(
+                    candidate.as_ref() as *const FfiObject as *const DwgObject,
+                    obj,
+                )
+            })
+            .ok_or(DWG_ENOTFOUND)
+    }
+
+    /// Mark an object and any core-owned companion objects as removed.
+    pub(crate) fn remove_object(&mut self, obj: *const DwgObject) -> Result<(), i32> {
+        let index = self.object_index(obj)?;
+        if !self.objects[index].alive {
+            return Err(DWG_ENOTFOUND);
+        }
+
+        let handle = self.objects[index].handle;
+        let is_entity = !self.objects[index].entity.is_null();
+        let mut removed_handles = Vec::new();
+        if is_entity {
+            // Delete the history graph while the entity is still present so
+            // CadDocument can resolve its history root safely.
+            removed_handles.extend(
+                self.doc
+                    .delete_solid_history(handle)
+                    .into_iter()
+                    .map(|(history_handle, _)| history_handle),
+            );
+            if self.doc.remove_entity_arc(handle).is_none() {
+                return Err(DWG_ENOTFOUND);
+            }
+            // CadDocument::remove_entity_arc intentionally keeps this list
+            // for undo. A real FFI deletion must remove the live owner link.
+            for block in self.doc.block_records.iter_mut() {
+                block
+                    .entity_handles
+                    .retain(|candidate| *candidate != handle);
+            }
+        } else if self.doc.objects.remove(&handle).is_none() {
+            return Err(DWG_ENOTFOUND);
+        }
+
+        removed_handles.push(handle);
+        for candidate in &mut self.objects {
+            if removed_handles.contains(&candidate.handle) {
+                candidate.alive = false;
+                candidate.entity = ptr::null();
+                candidate.object = ptr::null();
+                candidate.next = ptr::null();
+                candidate.kind = DwgObjectType::Unknown;
+                candidate.handle = Handle::NULL;
+            }
+        }
+        self.relink_objects();
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -167,6 +273,10 @@ impl FfiDocument {
             set_last_error(DWG_ENOTFOUND, "object does not belong to document");
             return DWG_ENOTFOUND;
         };
+        if !self.objects[index].alive {
+            set_last_error(DWG_ENOTFOUND, "object has been removed");
+            return DWG_ENOTFOUND;
+        }
         if self.objects[index].entity.is_null() {
             set_last_error(DWG_ETYPE, "object is not an entity");
             return DWG_ETYPE;
@@ -209,8 +319,15 @@ mod tests {
 
     fn sample_doc() -> CadDocument {
         let mut doc = CadDocument::new();
-        doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 2.0, 3.0))).unwrap();
-        doc.add_entity(EntityType::Circle(Circle::from_center_radius(Vector3::new(5.0, 6.0, 0.0), 2.5))).unwrap();
+        doc.add_entity(EntityType::Line(Line::from_coords(
+            0.0, 0.0, 0.0, 1.0, 2.0, 3.0,
+        )))
+        .unwrap();
+        doc.add_entity(EntityType::Circle(Circle::from_center_radius(
+            Vector3::new(5.0, 6.0, 0.0),
+            2.5,
+        )))
+        .unwrap();
         let mut t = Text::new();
         t.value = "hello".to_string();
         t.height = 1.0;
@@ -221,7 +338,10 @@ mod tests {
     #[test]
     fn arena_builds_in_entity_order() {
         let ffi = FfiDocument::new(sample_doc());
-        assert!(ffi.objects.len() > 3, "arena should contain entities plus default objects");
+        assert!(
+            ffi.objects.len() > 3,
+            "arena should contain entities plus default objects"
+        );
         assert_eq!(ffi.objects[0].kind, DwgObjectType::Line);
         assert_eq!(ffi.objects[1].kind, DwgObjectType::Circle);
         assert_eq!(ffi.objects[2].kind, DwgObjectType::Text);
