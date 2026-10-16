@@ -2025,12 +2025,8 @@ pub struct HatchData {
     pub gradient_shift: f64,
     pub gradient_single_color: bool,
     pub gradient_tint: f64,
-    pub gradient_colors: Vec<(
-        f64,
-        crate::types::Color,
-        Option<String>,
-        Option<String>,
-    )>,
+    /// Value, color, and the color's book name and book.
+    pub gradient_colors: Vec<(f64, crate::types::Color, Option<String>, Option<String>)>,
     pub gradient_name: String,
     pub elevation: f64,
     pub normal: Vector3,
@@ -5562,9 +5558,11 @@ fn read_surface_sweep_options(reader: &mut DwgMergedReader) -> SurfaceSweepOptio
     let align_start = reader.read_bit();
     let bank = reader.read_bit();
     let base_point_set = reader.read_bit();
+    // In DWG the twist reference vector comes before the two
+    // transform-computed flags (DXF writes it after them).
+    let reference_vector = reader.read_3bit_double();
     let sweep_entity_transform_computed = reader.read_bit();
     let path_entity_transform_computed = reader.read_bit();
-    let reference_vector = reader.read_3bit_double();
     let sweep_entity_transform = read_surface_matrix(reader);
     let path_entity_transform = read_surface_matrix(reader);
     SurfaceSweepOptions {
@@ -5834,6 +5832,8 @@ pub fn read_surface(
 fn read_wire(reader: &mut DwgMergedReader) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
+    // Wire colors remain BS in R2004+; BL consumes the next field's bits
+    // for the full-width ByLayer value (256) and shifts point counts.
     let color_val = reader.read_bit_short();
     let acis_index = reader.read_bit_long();
     let num_pts = safe_count(reader.read_bit_long(), reader);

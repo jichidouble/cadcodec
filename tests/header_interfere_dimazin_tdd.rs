@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 
-use acadrust::types::DxfVersion;
+use acadrust::types::{Color, DxfVersion};
 use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: CadDocument) -> CadDocument {
@@ -39,16 +39,17 @@ fn dxf_roundtrip_preserves_dimazin() {
 }
 
 #[test]
-fn dxf_roundtrip_preserves_interfere_color() {
+fn dxf_roundtrip_preserves_interference_color() {
     // $INTERFERECOLOR (group 62) is a distinct R2007+ header variable and must
     // round-trip independently of $INTERSECTIONCOLOR.
     let mut doc = CadDocument::with_version(DxfVersion::AC1027);
-    doc.header.interfere_color = 5;
+    doc.header.interference_color = Color::from_index(5);
     doc.header.intersection_color = 7;
 
     let rt = dxf_roundtrip(doc);
     assert_eq!(
-        rt.header.interfere_color, 5,
+        rt.header.interference_color.approximate_index(),
+        5,
         "INTERFERECOLOR must survive a DXF round-trip"
     );
     assert_eq!(
@@ -58,16 +59,17 @@ fn dxf_roundtrip_preserves_interfere_color() {
 }
 
 #[test]
-fn dwg_roundtrip_preserves_interfere_color() {
+fn dwg_roundtrip_preserves_interference_color() {
     // §D.5 item 97: R2007+ B, CMC(INTERFERECOLOR), H*, H*, H*, RC, BD. The CMC
     // slot carries INTERFERECOLOR, not INTERSECTIONCOLOR.
     let mut doc = CadDocument::with_version(DxfVersion::AC1027);
-    doc.header.interfere_color = 5;
+    doc.header.interference_color = Color::from_index(5);
     doc.header.intersection_color = 7;
 
     let rt = dwg_roundtrip(&doc);
     assert_eq!(
-        rt.header.interfere_color, 5,
+        rt.header.interference_color.approximate_index(),
+        5,
         "INTERFERECOLOR must survive a DWG round-trip"
     );
     assert_eq!(
@@ -80,7 +82,7 @@ fn dwg_roundtrip_preserves_interfere_color() {
 fn dxf_dwg_dxf_preserves_both() {
     // Cross-format: DXF -> DWG -> DXF must keep INTERFERECOLOR and DIMAZIN.
     let mut doc = CadDocument::with_version(DxfVersion::AC1027);
-    doc.header.interfere_color = 9;
+    doc.header.interference_color = Color::from_index(9);
     doc.header.dim_alt_zero_suppression = 1;
 
     let bytes = DwgWriter::write_to_vec(&doc).expect("DWG write failed");
@@ -89,7 +91,8 @@ fn dxf_dwg_dxf_preserves_both() {
 
     let rt = dxf_roundtrip(from_dwg);
     assert_eq!(
-        rt.header.interfere_color, 9,
+        rt.header.interference_color.approximate_index(),
+        9,
         "INTERFERECOLOR must survive DXF -> DWG -> DXF"
     );
     assert_eq!(
