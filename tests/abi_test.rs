@@ -117,10 +117,13 @@ fn version_and_parse_symbols_exported() {
         let ptr = dwg_version();
         assert!(!ptr.is_null());
         let version = std::ffi::CStr::from_ptr(ptr).to_str().unwrap();
-        assert!(version.starts_with("acadrust-0.4.1"));
+        assert!(version.starts_with(concat!("acadrust-", env!("CARGO_PKG_VERSION"))));
 
         let s = std::ffi::CString::new("AC1032").unwrap();
-        assert_eq!(dwg_parse_version(s.as_ptr()), 8);
+        assert_eq!(
+            dwg_parse_version(s.as_ptr()),
+            acadrust::types::DxfVersion::AC1032 as i32
+        );
     }
 }
 
